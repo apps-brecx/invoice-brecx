@@ -1,11 +1,14 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./lib/auth";
+import { BillingProvider } from "./lib/store";
 import { AppLayout } from "./components/AppLayout";
 import { Login } from "./pages/Login/Login";
 import { Dashboard } from "./pages/Dashboard/Dashboard";
 import { Invoices } from "./pages/Invoices/Invoices";
-import { InvoiceDetail } from "./pages/InvoiceDetail/InvoiceDetail";
-import { Clients } from "./pages/Clients/Clients";
+import { CreateInvoice } from "./pages/CreateInvoice/CreateInvoice";
+import { Customers } from "./pages/Customers/Customers";
+import { Reports } from "./pages/Reports/Reports";
+import { Payments } from "./pages/Payments/Payments";
 import { SettingsAccount } from "./pages/SettingsAccount/SettingsAccount";
 import { ErrorPage } from "./pages/ErrorPage/ErrorPage";
 
@@ -33,15 +36,19 @@ export default function App() {
       <Route
         element={
           <Protected>
-            <AppLayout />
+            <BillingProvider>
+              <AppLayout />
+            </BillingProvider>
           </Protected>
         }
       >
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/invoices" element={<Invoices />} />
-        <Route path="/invoices/:id" element={<InvoiceDetail />} />
-        <Route path="/clients" element={<Clients />} />
+        <Route path="/invoices/new" element={<CreateInvoice />} />
+        <Route path="/customers" element={<Customers />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/payments" element={<Payments />} />
         <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
         <Route path="/settings/account" element={<SettingsAccount />} />
         <Route path="*" element={<ErrorPage message="Page not found" />} />

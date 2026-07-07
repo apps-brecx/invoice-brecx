@@ -5,7 +5,7 @@ services:
     runtime: node
     # Same coast as the Neon database (us-east-1) to keep query latency low.
     region: virginia
-    plan: starter
+    plan: free
     rootDir: .
     # npm -g pnpm (not `corepack enable`): on Render's newer Node images
     # `/usr/bin` is read-only and corepack enable crashes with EROFS.

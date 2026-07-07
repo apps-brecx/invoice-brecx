@@ -19,10 +19,10 @@ export function SettingsAccount() {
     onSuccess: async () => {
       setPassword("");
       await refresh();
-      toast("Profile saved.");
+      toast("Profile saved");
     },
     onError: (err) =>
-      toast(err instanceof ApiError ? err.message : "Could not save your profile.", "error"),
+      toast(err instanceof ApiError ? err.message : "Could not save your profile", "error"),
   });
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -31,48 +31,48 @@ export function SettingsAccount() {
   }
 
   return (
-    <div className="panel" style={{ maxWidth: 640 }}>
-      <div className="head">
+    <section className="view">
+      <div className="page-head">
         <div>
-          <h2>Your account</h2>
-          <div className="desc">Profile details for {user?.email}.</div>
+          <h1>Settings</h1>
+          <p>Your account on this workspace.</p>
         </div>
       </div>
-      <form className="body" onSubmit={onSubmit}>
-        <div className="field-row">
-          <div>
-            <div className="label">Email</div>
-            <div className="hint">Your sign-in identity — it can't be changed here.</div>
+
+      <form className="card form-card" style={{ maxWidth: 560 }} onSubmit={onSubmit}>
+        <div className="f-sec">
+          <span className="f-lab">Account</span>
+          <div className="field">
+            <input value={user?.email ?? ""} disabled />
+            <small>Email — your sign-in identity, fixed</small>
           </div>
-          <input className="input" value={user?.email ?? ""} disabled />
-        </div>
-        <div className="field-row">
-          <div>
-            <div className="label">Display name</div>
-            <div className="hint">Shown in the sidebar and on invoices you create.</div>
+          <div className="field">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+            <small>Display name</small>
           </div>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="field-row">
-          <div>
-            <div className="label">New password</div>
-            <div className="hint">Leave empty to keep your current password. Min 8 characters.</div>
+
+        <div className="f-sec">
+          <span className="f-lab">Security</span>
+          <div className="field">
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+            <small>New password — leave empty to keep the current one (min 8 characters)</small>
           </div>
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
         </div>
-        <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
-          <button type="submit" className="btn primary" disabled={save.isPending}>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button type="submit" className="btn btn-primary" disabled={save.isPending}>
             {save.isPending ? "Saving…" : "Save changes"}
           </button>
         </div>
       </form>
-    </div>
+    </section>
   );
 }

@@ -1,100 +1,137 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useRef } from "react";
+import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { Logo } from "./Logo";
+import { useBilling, invoiceBalance } from "../lib/store";
+import { initialsOf } from "../lib/store";
 
-/** Sidebar + main content wrapper. Sidebar has icon-driven nav items with a
- *  strong active state (brand-blue tint + left rail) and a pinned-to-bottom
- *  user card. */
+/** Ledger shell straight from the mockup: light sidebar with brass spine,
+ *  topbar with breadcrumb + search + New invoice. */
 export function AppLayout() {
   const { user, signOut } = useAuth();
+  const { customers, invoices } = useBilling();
   const { pathname } = useLocation();
-  const page = pageInfo(pathname);
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // Mobile nav drawer — closes whenever the route changes.
-  const [navOpen, setNavOpen] = useState(false);
-  useEffect(() => setNavOpen(false), [pathname]);
+  const openCount = invoices.filter(
+    (i) => i.status !== "paid" && i.status !== "draft" && invoiceBalance(i) > 0,
+  ).length;
 
-  const initials =
-    (user?.name || user?.email || "?")
-      .split(/\s+/)
-      .map((s) => s[0])
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
+  // ⌘K / Ctrl+K focuses the search box.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const crumb = pageName(pathname);
 
   return (
     <div className="app">
-      {navOpen && <div className="nav-overlay" onClick={() => setNavOpen(false)} />}
-      <aside className={"sidebar" + (navOpen ? " open" : "")}>
+      <aside className="side">
         <div className="brand">
-          <Logo size={28} />
-          <span>Invoice Brecx</span>
+          <div className="brand-mark">B</div>
+          <div>
+            <div className="brand-name">Brecx Billing</div>
+            <div className="brand-sub">Fresh Finest LLC</div>
+          </div>
         </div>
+
         <nav className="nav">
-          <div className="section">Billing</div>
-          <NavLink to="/dashboard" className={pathname.startsWith("/dashboard") ? "active" : ""}>
-            <GaugeIcon />
-            <span>Dashboard</span>
+          <div className="nav-label">Workspace</div>
+          <NavLink to="/dashboard">
+            <DashIcon />
+            <span className="t">Dashboard</span>
           </NavLink>
-          <NavLink to="/invoices" className={pathname.startsWith("/invoices") ? "active" : ""}>
+          <NavLink to="/invoices" end>
             <InvoiceIcon />
-            <span>Invoices</span>
+            <span className="t">Invoices</span>
+            {openCount > 0 && <span className="count hot">{openCount}</span>}
           </NavLink>
-          <NavLink to="/clients" className={pathname.startsWith("/clients") ? "active" : ""}>
-            <ClientsIcon />
-            <span>Clients</span>
+          <NavLink to="/invoices/new">
+            <PlusIcon />
+            <span className="t">New invoice</span>
           </NavLink>
-        </nav>
+          <NavLink to="/customers">
+            <CustomersIcon />
+            <span className="t">Customers</span>
+            <span className="count">{customers.length}</span>
+          </NavLink>
+          <NavLink to="/reports">
+            <ReportsIcon />
+            <span className="t">Reports</span>
+          </NavLink>
 
-        <nav className="nav nav-bottom">
-          <div className="section">Account</div>
-          <NavLink to="/settings/account" className={pathname.startsWith("/settings") ? "active" : ""}>
+          <div className="nav-label">Manage</div>
+          <NavLink to="/payments">
+            <PaymentsIcon />
+            <span className="t">Payments</span>
+          </NavLink>
+          <NavLink to="/settings/account">
             <GearIcon />
-            <span>Settings</span>
+            <span className="t">Settings</span>
           </NavLink>
         </nav>
 
-        {user && (
-          <div className="sidebar-user">
-            <div className="user-card">
-              <div className="user-avatar">{initials}</div>
-              <div className="user-meta">
-                <div className="user-name">{user.name || user.email}</div>
-                <div className="user-sub">
-                  {user.email} · {user.role}
-                </div>
-              </div>
+        <div className="side-foot">
+          <div className="side-user">
+            <div className="avatar">{initialsOf(user?.name || user?.email || "?")}</div>
+            <div>
+              <b>{user?.name || user?.email}</b>
+              <span>{user?.role === "admin" ? "Owner" : "Member"} · Brecx</span>
             </div>
             <button
               type="button"
-              className="sign-out-btn"
+              className="side-signout"
+              title="Sign out"
+              aria-label="Sign out"
               onClick={() => void signOut()}
             >
               <SignOutIcon />
-              Sign out
             </button>
           </div>
-        )}
+        </div>
       </aside>
-      <div className="content">
-        <header className="app-header">
-          <div className="ah-left">
-            <button
-              type="button"
-              className="menu-btn"
-              aria-label="Open navigation"
-              onClick={() => setNavOpen(true)}
-            >
-              <MenuIcon />
-            </button>
-            <div className="ah-titles">
-              <div className="ah-crumb">{page.section}</div>
-              <div className="ah-title">{page.title}</div>
-            </div>
+
+      <div className="main">
+        <header className="topbar">
+          <div className="crumb">
+            <span>Fresh Finest / </span>
+            <span className="here">{crumb}</span>
           </div>
+          <label className="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              ref={searchRef}
+              placeholder="Search invoices, customers…"
+              defaultValue={params.get("q") ?? ""}
+              onChange={(e) => {
+                const q = e.target.value;
+                navigate(q ? `/invoices?q=${encodeURIComponent(q)}` : "/invoices", {
+                  replace: pathname === "/invoices",
+                });
+              }}
+            />
+            <span className="kbd">⌘K</span>
+          </label>
+          <button className="btn btn-primary" onClick={() => navigate("/invoices/new")}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            New invoice
+          </button>
         </header>
-        <main className="main">
+
+        <main className="content">
           <Outlet />
         </main>
       </div>
@@ -102,66 +139,80 @@ export function AppLayout() {
   );
 }
 
-/** Section + page name for the top header, derived from the route. */
-function pageInfo(pathname: string): { section: string; title: string } {
-  if (pathname.startsWith("/dashboard")) return { section: "Billing", title: "Dashboard" };
-  if (pathname.startsWith("/invoices/")) return { section: "Billing", title: "Invoice Details" };
-  if (pathname.startsWith("/invoices")) return { section: "Billing", title: "Invoices" };
-  if (pathname.startsWith("/clients")) return { section: "Billing", title: "Clients" };
-  if (pathname.startsWith("/settings")) return { section: "Account", title: "Settings" };
-  return { section: "", title: "Invoice Brecx" };
+function pageName(pathname: string): string {
+  if (pathname.startsWith("/invoices/new")) return "New invoice";
+  if (pathname.startsWith("/invoices")) return "Invoices";
+  if (pathname.startsWith("/customers")) return "Customers";
+  if (pathname.startsWith("/reports")) return "Reports";
+  if (pathname.startsWith("/payments")) return "Payments";
+  if (pathname.startsWith("/settings")) return "Settings";
+  return "Dashboard";
 }
 
-/* ---------- Icons (Lucide-flavoured line icons) ---------- */
+/* ---------- Sidebar icons (from the mockup) ---------- */
 
-function GaugeIcon() {
+function DashIcon() {
   return (
-    <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 14 4-4" />
-      <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="3" width="7" height="9" rx="1.5" />
+      <rect x="14" y="3" width="7" height="5" rx="1.5" />
+      <rect x="14" y="12" width="7" height="9" rx="1.5" />
+      <rect x="3" y="16" width="7" height="5" rx="1.5" />
     </svg>
   );
 }
 function InvoiceIcon() {
   return (
-    <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="16" y1="13" x2="8" y2="13" />
-      <line x1="16" y1="17" x2="8" y2="17" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M6 2h9l4 4v16l-2.5-1.5L14 22l-2.5-1.5L9 22l-2.5-1.5L4 22V4a2 2 0 0 1 2-2z" />
+      <path d="M9 8h7M9 12h7M9 16h4" />
     </svg>
   );
 }
-function ClientsIcon() {
+function PlusIcon() {
   return (
-    <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
+}
+function CustomersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5" />
+      <circle cx="17.5" cy="9" r="2.5" />
+      <path d="M16 14.7c2.6.3 4.7 2 5.5 4.8" />
+    </svg>
+  );
+}
+function ReportsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 20V10M10 20V4M16 20v-8M21 20H3" />
+    </svg>
+  );
+}
+function PaymentsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 10h18M7 15h4" />
     </svg>
   );
 }
 function GearIcon() {
   return (
-    <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-function MenuIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
+      <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.5-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.4-2.6a7 7 0 0 0 2-1.2l2.5 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2z" />
     </svg>
   );
 }
 function SignOutIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
