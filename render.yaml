@@ -5,7 +5,7 @@ services:
     runtime: node
     # Same coast as the Neon database (us-east-1) to keep query latency low.
     region: virginia
-    plan: free
+    plan: starter
     rootDir: .
     # npm -g pnpm (not `corepack enable`): on Render's newer Node images
     # `/usr/bin` is read-only and corepack enable crashes with EROFS.
@@ -21,9 +21,10 @@ services:
         value: 4000
       - key: COOKIE_SECURE
         value: "true"
-      # web and API on separate onrender.com subdomains (cross-site)
+      # The web static site proxies /api/* here, so the browser only ever
+      # talks to one origin — first-party cookies, lax is correct.
       - key: COOKIE_SAMESITE
-        value: "none"
+        value: "lax"
       - key: DATABASE_URL
         sync: false
       - key: APP_ENCRYPTION_KEY
@@ -46,10 +47,15 @@ services:
     buildCommand: npm install -g pnpm@9.12.0 && pnpm install --frozen-lockfile --prod=false && pnpm --filter @inv/shared run build && pnpm --filter @inv/web run build
     staticPublishPath: apps/web/dist
     envVars:
-      # Set to the API URL once invoice-brecx-api is deployed
+      # Leave EMPTY — /api is proxied to the API service by the rewrite
+      # below, so the app calls its own origin.
       - key: VITE_API_URL
         sync: false
     routes:
+      # Order matters: proxy API calls first, then the SPA fallback.
+      - type: rewrite
+        source: /api/*
+        destination: https://invoice-brecx-api.onrender.com/api/*
       - type: rewrite
         source: /*
         destination: /index.html
