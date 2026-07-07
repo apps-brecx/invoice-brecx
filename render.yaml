@@ -1,0 +1,55 @@
+services:
+  # ============ API — Fastify + pg ============
+  - type: web
+    name: invoice-brecx-api
+    runtime: node
+    # Same coast as the Neon database (us-east-1) to keep query latency low.
+    region: virginia
+    plan: starter
+    rootDir: .
+    # npm -g pnpm (not `corepack enable`): on Render's newer Node images
+    # `/usr/bin` is read-only and corepack enable crashes with EROFS.
+    # --prod=false: NODE_ENV=production makes pnpm skip devDependencies
+    # (typescript, @types/*); the build needs them, so force-install dev deps.
+    buildCommand: npm install -g pnpm@9.12.0 && pnpm install --frozen-lockfile --prod=false && pnpm --filter @inv/shared run build && pnpm --filter @inv/api run build
+    startCommand: node apps/api/dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: COOKIE_SECURE
+        value: "true"
+      # web and API on separate onrender.com subdomains (cross-site)
+      - key: COOKIE_SAMESITE
+        value: "none"
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      # Comma-separated allowed web origins (set to the static site URL)
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+  # ============ Web — React + Vite (static) ============
+  - type: web
+    name: invoice-brecx-web
+    runtime: static
+    rootDir: .
+    buildCommand: npm install -g pnpm@9.12.0 && pnpm install --frozen-lockfile --prod=false && pnpm --filter @inv/shared run build && pnpm --filter @inv/web run build
+    staticPublishPath: apps/web/dist
+    envVars:
+      # Set to the API URL once invoice-brecx-api is deployed
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
