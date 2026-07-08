@@ -2,42 +2,103 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   useBilling,
   customerOf,
-  invoiceTotals,
-  invoiceBalance,
   daysSince,
   money,
   moneyK,
   fmtShort,
+  fmtLong,
+  type Invoice,
+  type Payment,
 } from "../../lib/store";
 import { Stamp, Cust } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 
+interface FeedItem {
+  key: string;
+  dot: string;
+  parts: Array<{ b?: boolean; t: string }>;
+  when: string; // sortable ISO
+  time: string; // display
+}
+
+/** Real activity, derived from the ledger itself: payments received,
+ *  invoices sent, drafts created. No stored feed, no fake entries. */
+function buildFeed(invoices: Invoice[], payments: Payment[]): FeedItem[] {
+  const items: FeedItem[] = [];
+  for (const p of payments) {
+    items.push({
+      key: `pay-${p.id}`,
+      dot: "var(--green)",
+      parts: [
+        { b: true, t: p.customerName },
+        { t: ` paid ${money(p.amount)} on ${p.invoiceNumber}${p.mode ? ` via ${p.mode.toLowerCase()}` : ""}.` },
+      ],
+      when: `${p.paidOn}T12:00:00`,
+      time: fmtLong(p.paidOn),
+    });
+  }
+  for (const i of invoices) {
+    if (i.sentAt) {
+      items.push({
+        key: `sent-${i.dbId}`,
+        dot: "var(--brass)",
+        parts: [
+          { t: "Invoice " },
+          { b: true, t: i.number },
+          { t: ` sent to ${i.customerName} — ${money(i.total)}, ${i.terms}.` },
+        ],
+        when: i.sentAt,
+        time: fmtLong(i.sentAt.slice(0, 10)),
+      });
+    } else if (i.status === "draft") {
+      items.push({
+        key: `draft-${i.dbId}`,
+        dot: "var(--mut-2)",
+        parts: [
+          { t: "Draft " },
+          { b: true, t: i.number },
+          { t: ` created for ${i.customerName} — awaiting review.` },
+        ],
+        when: i.createdAt,
+        time: fmtLong(i.createdAt.slice(0, 10)),
+      });
+    }
+  }
+  return items.sort((a, b) => b.when.localeCompare(a.when));
+}
+
 export function Dashboard() {
-  const { customers, invoices, activity, logActivity } = useBilling();
+  const { customers, invoices, payments, summary, loading } = useBilling();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const open = invoices.filter((i) => i.status !== "paid" && i.status !== "draft");
-  const outstanding = open.reduce((s, i) => s + invoiceBalance(i), 0);
+  const open = invoices.filter(
+    (i) => i.status !== "paid" && i.status !== "draft" && i.status !== "void",
+  );
   const overdueInvs = invoices.filter((i) => i.status === "overdue");
-  const overdue = overdueInvs.reduce((s, i) => s + invoiceBalance(i), 0);
-  const collected = invoices.reduce((s, i) => s + i.paidAmount, 0);
+
+  const now = new Date();
+  const monthKey = now.toISOString().slice(0, 7);
+  const monthName = now.toLocaleDateString("en-US", { month: "long" });
+  const collectedThisMonth = payments
+    .filter((p) => p.paidOn.startsWith(monthKey))
+    .reduce((s, p) => s + p.amount, 0);
 
   // Aging buckets by how long past due each open balance is.
   const buckets = [0, 0, 0, 0];
   for (const inv of open) {
-    const d = inv.due ? daysSince(inv.due) : 0;
-    const bal = invoiceBalance(inv);
-    if (d <= 0) buckets[0] += bal;
-    else if (d <= 30) buckets[1] += bal;
-    else if (d <= 60) buckets[2] += bal;
-    else buckets[3] += bal;
+    const d = daysSince(inv.due);
+    if (d <= 0) buckets[0] += inv.balance;
+    else if (d <= 30) buckets[1] += inv.balance;
+    else if (d <= 60) buckets[2] += inv.balance;
+    else buckets[3] += inv.balance;
   }
   const agingTotal = buckets.reduce((a, b) => a + b, 0) || 1;
   const agingColors = ["var(--bar-g1)", "var(--brass)", "var(--aging3)", "var(--red)"];
   const agingLabels = ["Current", "1–30 days", "31–60 days", "60+ days"];
 
   const recent = invoices.filter((i) => i.status !== "draft").slice(0, 5);
+  const feed = buildFeed(invoices, payments).slice(0, 6);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
@@ -52,28 +113,25 @@ export function Dashboard() {
     const rows = [
       ["No.", "Customer", "Status", "Issued", "Due", "Amount", "Balance"],
       ...invoices.map((i) => [
-        i.id,
-        customerOf(customers, i.customerId).name,
+        i.number,
+        i.customerName,
         i.status,
-        i.issued ?? "",
-        i.due ?? "",
-        invoiceTotals(i).grand.toFixed(2),
-        i.status === "draft" ? "" : invoiceBalance(i).toFixed(2),
+        i.issued,
+        i.due,
+        i.total.toFixed(2),
+        i.status === "draft" ? "" : i.balance.toFixed(2),
       ]),
     ];
     downloadCsv("brecx-ledger.csv", rows);
     toast("Ledger exported as CSV");
   }
 
-  function remind(invId: string) {
-    const inv = invoices.find((i) => i.id === invId)!;
-    const c = customerOf(customers, inv.customerId);
-    logActivity("var(--brass)", [
-      { t: "Reminder sent to " },
-      { b: true, t: c.name },
-      { t: ` for ${inv.id}${inv.status === "overdue" ? ` (${daysSince(inv.due)} days overdue)` : ""}.` },
-    ]);
-    toast(`Reminder sent to ${c.name}`);
+  if (loading) {
+    return (
+      <div className="center-fill">
+        <div className="spinner" />
+      </div>
+    );
   }
 
   return (
@@ -81,9 +139,7 @@ export function Dashboard() {
       <div className="page-head">
         <div>
           <h1>{greeting}, Brecx</h1>
-          <p>
-            {today} · Here's where the money stands.
-          </p>
+          <p>{today} · Here's where the money stands.</p>
         </div>
         <div className="right">
           <button className="btn btn-ghost" onClick={exportLedger}>
@@ -95,35 +151,35 @@ export function Dashboard() {
       <div className="cash-strip">
         <div className="cash-cell hero">
           <div className="lab">Outstanding</div>
-          <div className="val">{money(outstanding)}</div>
+          <div className="val">{money(summary.outstanding)}</div>
           <div className="sub">
-            across <b>{open.length} open invoices</b>
+            across <b>{summary.openCount} open invoices</b>
           </div>
         </div>
         <div className="cash-cell">
           <div className="lab">Overdue</div>
           <div className="val" style={{ color: "var(--red)" }}>
-            {money(overdue)}
+            {money(summary.overdue)}
           </div>
           <div className="sub">
             <b>{overdueInvs.length} invoices</b> past due date
           </div>
         </div>
         <div className="cash-cell">
-          <div className="lab">Collected · July</div>
+          <div className="lab">Collected · {monthName}</div>
           <div className="val" style={{ color: "var(--green)" }}>
-            {money(collected)}
+            {money(collectedThisMonth)}
           </div>
           <div className="sub">
-            <span className="tick-up">▲ 12.4%</span> vs June
+            across <b>{payments.filter((p) => p.paidOn.startsWith(monthKey)).length} payments</b>
           </div>
         </div>
         <div className="cash-cell">
           <div className="lab">Avg. days to pay</div>
-          <div className="val">18.2</div>
-          <div className="sub">
-            <span className="tick-up">▼ 2.1 days</span> improving
+          <div className="val">
+            {summary.avgDaysToPay === null ? "—" : summary.avgDaysToPay.toFixed(1)}
           </div>
+          <div className="sub">across all paid invoices</div>
         </div>
       </div>
 
@@ -137,56 +193,61 @@ export function Dashboard() {
               </Link>
             </div>
             <div className="panel-body">
-              <table className="ledger">
-                <thead>
-                  <tr>
-                    <th>No.</th>
-                    <th>Customer</th>
-                    <th>Issued</th>
-                    <th className="right">Amount</th>
-                    <th>Status</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recent.map((inv) => {
-                    const c = customerOf(customers, inv.customerId);
-                    return (
-                      <tr key={inv.id}>
-                        <td>
-                          <button className="inv-id" onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}>
-                            {inv.id}
-                          </button>
-                        </td>
-                        <td>
-                          <Cust customer={c} sub={`${c.type} · ${c.terms}`} />
-                        </td>
-                        <td className="num">{fmtShort(inv.issued)}</td>
-                        <td className="num right">{money(invoiceTotals(inv).grand)}</td>
-                        <td>
-                          <Stamp status={inv.status} />
-                        </td>
-                        <td>
-                          <div className="row-actions">
-                            {inv.status !== "paid" && (
-                              <button className="icon-btn" title="Send reminder" onClick={() => remind(inv.id)}>
-                                ✉
-                              </button>
-                            )}
+              {recent.length === 0 ? (
+                <div className="empty-note">
+                  <b>No invoices sent yet</b>
+                  Send your first invoice and it lands here.
+                </div>
+              ) : (
+                <table className="ledger">
+                  <thead>
+                    <tr>
+                      <th>No.</th>
+                      <th>Customer</th>
+                      <th>Issued</th>
+                      <th className="right">Amount</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recent.map((inv) => {
+                      const c = customerOf(customers, inv.customerId);
+                      return (
+                        <tr key={inv.dbId}>
+                          <td>
                             <button
-                              className="icon-btn"
-                              title="View"
-                              onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}
+                              className="inv-id"
+                              onClick={() => navigate(`/invoices/${inv.dbId}`)}
                             >
-                              →
+                              {inv.number}
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          </td>
+                          <td>
+                            <Cust customer={c} sub={`${c.type} · ${inv.terms}`} />
+                          </td>
+                          <td className="num">{fmtShort(inv.issued)}</td>
+                          <td className="num right">{money(inv.total)}</td>
+                          <td>
+                            <Stamp status={inv.status} />
+                          </td>
+                          <td>
+                            <div className="row-actions">
+                              <button
+                                className="icon-btn"
+                                title="View"
+                                onClick={() => navigate(`/invoices/${inv.dbId}`)}
+                              >
+                                →
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
 
@@ -196,7 +257,7 @@ export function Dashboard() {
             </div>
             <div className="aging">
               <div className="aging-note">
-                {money(outstanding)} outstanding, by how long it's been waiting
+                {money(summary.outstanding)} outstanding, by how long it's been waiting
               </div>
               <div
                 className="aging-bar"
@@ -228,17 +289,24 @@ export function Dashboard() {
           <div className="panel-head">
             <h2>Activity</h2>
           </div>
-          <ul className="feed">
-            {activity.slice(0, 6).map((a) => (
-              <li key={a.id}>
-                <span className="dot" style={{ background: a.dot }} />
-                <div>
-                  {a.parts.map((p, i) => (p.b ? <b key={i}>{p.t}</b> : <span key={i}>{p.t}</span>))}
-                  <time>{a.time}</time>
-                </div>
-              </li>
-            ))}
-          </ul>
+          {feed.length === 0 ? (
+            <div className="empty-note">
+              <b>Quiet so far</b>
+              Invoice activity shows up here.
+            </div>
+          ) : (
+            <ul className="feed">
+              {feed.map((a) => (
+                <li key={a.key}>
+                  <span className="dot" style={{ background: a.dot }} />
+                  <div>
+                    {a.parts.map((p, i) => (p.b ? <b key={i}>{p.t}</b> : <span key={i}>{p.t}</span>))}
+                    <time>{a.time}</time>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </section>

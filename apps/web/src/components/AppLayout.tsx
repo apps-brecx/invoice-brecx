@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { useBilling, invoiceBalance } from "../lib/store";
-import { initialsOf } from "../lib/store";
+import { useBilling, initialsOf } from "../lib/store";
 
 /** Ledger shell straight from the mockup: light sidebar with brass spine,
  *  topbar with breadcrumb + search + New invoice. */
@@ -15,7 +14,7 @@ export function AppLayout() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const openCount = invoices.filter(
-    (i) => i.status !== "paid" && i.status !== "draft" && invoiceBalance(i) > 0,
+    (i) => i.status !== "paid" && i.status !== "draft" && i.status !== "void" && i.balance > 0,
   ).length;
 
   // ⌘K / Ctrl+K focuses the search box.
@@ -72,6 +71,10 @@ export function AppLayout() {
           <NavLink to="/payments">
             <PaymentsIcon />
             <span className="t">Payments</span>
+          </NavLink>
+          <NavLink to="/settings/template">
+            <TemplateIcon />
+            <span className="t">Template</span>
           </NavLink>
           <NavLink to="/settings/account">
             <GearIcon />
@@ -145,8 +148,19 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/customers")) return "Customers";
   if (pathname.startsWith("/reports")) return "Reports";
   if (pathname.startsWith("/payments")) return "Payments";
+  if (pathname.startsWith("/settings/template")) return "Invoice template";
   if (pathname.startsWith("/settings")) return "Settings";
   return "Dashboard";
+}
+
+function TemplateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="2.5" width="16" height="19" rx="2" />
+      <path d="M8 7h8M8 11h8M8 15h4" />
+      <circle cx="16.5" cy="16.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 /* ---------- Sidebar icons (from the mockup) ---------- */

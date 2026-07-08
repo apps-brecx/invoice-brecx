@@ -1,22 +1,13 @@
 import { useNavigate } from "react-router-dom";
-import {
-  useBilling,
-  customerOf,
-  invoiceTotals,
-  money,
-  fmtShort,
-} from "../../lib/store";
-import { Stamp, Cust } from "../../components/bits";
+import { useBilling, customerOf, money, fmtShort } from "../../lib/store";
+import { Cust } from "../../components/bits";
 
-/** Money that actually arrived — every full or partial payment on record. */
+/** Money that actually arrived — every payment row on record. */
 export function Payments() {
-  const { customers, invoices } = useBilling();
+  const { customers, payments, loading } = useBilling();
   const navigate = useNavigate();
 
-  const paymentRows = invoices
-    .filter((i) => i.paidAmount > 0)
-    .sort((a, b) => (b.issued ?? "").localeCompare(a.issued ?? ""));
-  const received = paymentRows.reduce((s, i) => s + i.paidAmount, 0);
+  const received = payments.reduce((s, p) => s + p.amount, 0);
 
   return (
     <section className="view">
@@ -24,50 +15,57 @@ export function Payments() {
         <div>
           <h1>Payments</h1>
           <p>
-            {money(received)} received across {paymentRows.length} payments.
+            {money(received)} received across {payments.length} payments.
           </p>
         </div>
       </div>
 
       <div className="card">
         <div className="panel-body">
-          {paymentRows.length === 0 ? (
+          {loading ? (
+            <div className="center-fill" style={{ minHeight: "30vh" }}>
+              <div className="spinner" />
+            </div>
+          ) : payments.length === 0 ? (
             <div className="empty-note">
               <b>No payments yet</b>
-              Payments appear here once invoices get paid.
+              Payments appear here once you record them on invoices.
             </div>
           ) : (
             <table className="ledger">
               <thead>
                 <tr>
+                  <th>Date</th>
                   <th>Invoice</th>
                   <th>Customer</th>
-                  <th>Issued</th>
+                  <th>Mode</th>
+                  <th>Reference</th>
                   <th className="right">Invoice total</th>
                   <th className="right">Paid</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {paymentRows.map((inv) => {
-                  const c = customerOf(customers, inv.customerId);
+                {payments.map((p) => {
+                  const c = customerOf(customers, p.customerId);
                   return (
-                    <tr key={inv.id}>
+                    <tr key={p.id}>
+                      <td className="num">{fmtShort(p.paidOn)}</td>
                       <td>
-                        <button className="inv-id" onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}>
-                          {inv.id}
+                        <button
+                          className="inv-id"
+                          onClick={() => navigate(`/invoices/${p.invoiceId}`)}
+                        >
+                          {p.invoiceNumber}
                         </button>
                       </td>
                       <td>
                         <Cust customer={c} />
                       </td>
-                      <td className="num">{fmtShort(inv.issued)}</td>
-                      <td className="num right">{money(invoiceTotals(inv).grand)}</td>
+                      <td>{p.mode ?? "—"}</td>
+                      <td className="num">{p.reference ?? "—"}</td>
+                      <td className="num right">{money(p.invoiceTotal)}</td>
                       <td className="num right" style={{ color: "var(--green)", fontWeight: 600 }}>
-                        {money(inv.paidAmount)}
-                      </td>
-                      <td>
-                        <Stamp status={inv.status} />
+                        {money(p.amount)}
                       </td>
                     </tr>
                   );

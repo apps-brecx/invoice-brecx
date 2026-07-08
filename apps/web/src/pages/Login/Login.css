@@ -209,10 +209,10 @@
 .login-wrap .btn:active{transform:translateY(1px)}
 .login-wrap .btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .login-wrap .btn-primary{
-  background:linear-gradient(180deg,#25795A,var(--green));color:#fff;
+  background:var(--green) linear-gradient(180deg,#25795A,var(--green));color:#fff;
   box-shadow:0 1px 0 rgba(0,0,0,.12),0 8px 18px -8px var(--green);
 }
-.login-wrap .btn-primary:hover{background:var(--green)}
+.login-wrap .btn-primary:hover{background-image:none}
 .login-wrap .btn-primary:disabled{opacity:.7;cursor:progress}
 .login-wrap .spin{
   width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.35);

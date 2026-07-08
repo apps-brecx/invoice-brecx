@@ -5,7 +5,9 @@ import { AppLayout } from "./components/AppLayout";
 import { Login } from "./pages/Login/Login";
 import { Dashboard } from "./pages/Dashboard/Dashboard";
 import { Invoices } from "./pages/Invoices/Invoices";
+import { InvoiceDetail } from "./pages/Invoices/InvoiceDetail";
 import { CreateInvoice } from "./pages/CreateInvoice/CreateInvoice";
+import { SettingsTemplate } from "./pages/SettingsTemplate/SettingsTemplate";
 import { Customers } from "./pages/Customers/Customers";
 import { Reports } from "./pages/Reports/Reports";
 import { Payments } from "./pages/Payments/Payments";
@@ -46,11 +48,14 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/invoices/new" element={<CreateInvoice />} />
+        <Route path="/invoices/:id" element={<InvoiceDetail />} />
+        <Route path="/invoices/:id/edit" element={<CreateInvoice />} />
         <Route path="/customers" element={<Customers />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
         <Route path="/settings/account" element={<SettingsAccount />} />
+        <Route path="/settings/template" element={<SettingsTemplate />} />
         <Route path="*" element={<ErrorPage message="Page not found" />} />
       </Route>
     </Routes>

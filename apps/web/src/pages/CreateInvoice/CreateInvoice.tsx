@@ -1,231 +1,504 @@
-import { useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import {
-  useBilling,
-  customerOf,
-  money,
-  fmtLong,
-  type Line,
-  type InvoiceStatus,
-} from "../../lib/store";
-import { STATUS_LABEL } from "../../components/bits";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { api } from "../../lib/api";
+import { useBilling, money, type Customer, type Item } from "../../lib/store";
+import { useTemplate } from "../../lib/template";
+import { usePaymentTerms, dueDateFor } from "../../lib/terms";
 import { useToast } from "../../components/Toast";
+import { AddCustomerModal } from "../../components/CustomerModal";
+import { CustomerPicker } from "../../components/CustomerPicker";
+import { SearchSelect } from "../../components/SearchSelect";
+import { DatePicker } from "../../components/DatePicker";
+import { ItemSelect } from "../../components/ItemSelect";
+import { NewItemModal } from "../../components/ItemModal";
+import { BulkItemsModal } from "../../components/BulkItemsModal";
+import { NewTermModal } from "../../components/TermModal";
+import { CustomizeDrawer } from "../../components/CustomizeDrawer";
 
-const TERMS = ["Net 15", "Net 30", "Net 45", "Due on receipt"];
+const todayISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
-function termDays(terms: string): number {
-  const m = terms.match(/\d+/);
-  return m ? Number(m[0]) : 0;
+interface Line {
+  description: string;
+  qty: number;
+  price: number;
+  unit?: string | null;
+  extra?: Record<string, string>;
 }
 
-function addDays(iso: string, days: number): string {
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+/** Label ABOVE the input, Zoho-style. */
+function Field({ label, children, grow }: { label: string; children: ReactNode; grow?: boolean }) {
+  return (
+    <div className={"field lab-top" + (grow ? " grow" : "")}>
+      <span className="f-cap">{label}</span>
+      {children}
+    </div>
+  );
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
+/** Zoho-style New Invoice form. Also the draft editor via /invoices/:id/edit. */
 export function CreateInvoice() {
-  const { customers, invoices, nextInvoiceId, saveInvoice, logActivity } = useBilling();
+  const { id } = useParams(); // present in edit mode
+  const { customers, items, refresh } = useBilling();
+  const { template, loaded: tplLoaded } = useTemplate();
+  const { terms: termOptions, refresh: refreshTerms } = usePaymentTerms();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [params] = useSearchParams();
 
-  // ?inv=INV-2608 loads an existing invoice into the editor (edit a draft,
-  // or inspect a sent one). Otherwise it's a brand-new draft.
-  const existing = useMemo(
-    () => invoices.find((i) => i.id === params.get("inv")),
-    // Load once per navigation — edits shouldn't reset the form.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [params.get("inv")],
+  const editing = Boolean(id);
+
+  const [loadedExisting, setLoadedExisting] = useState(!editing);
+  const [number, setNumber] = useState<string | null>(null);
+  const [custId, setCustId] = useState<number | 0>(0);
+  const [orderNumber, setOrderNumber] = useState("");
+  const [issue, setIssue] = useState(todayISO());
+  const [terms, setTerms] = useState("Due on Receipt");
+  const [due, setDue] = useState(todayISO());
+  const [subject, setSubject] = useState("");
+  const [lines, setLines] = useState<Line[]>([{ description: "", qty: 1, price: 0 }]);
+  const [discountPct, setDiscountPct] = useState(0);
+  const [taxPct, setTaxPct] = useState(0);
+  const [shipping, setShipping] = useState(0);
+  const [adjustment, setAdjustment] = useState(0);
+  const [notes, setNotes] = useState("");
+  const [tnc, setTnc] = useState("");
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [addingTerm, setAddingTerm] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [newItemFor, setNewItemFor] = useState<number | null>(null); // line index
+  const [saving, setSaving] = useState(false);
+  const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const [customizing, setCustomizing] = useState(false);
+  const sendMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sendMenuOpen) return;
+    function onDown(e: MouseEvent) {
+      if (sendMenuRef.current && !sendMenuRef.current.contains(e.target as Node)) {
+        setSendMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [sendMenuOpen]);
+
+  // Template defaults prefill notes/terms on a fresh invoice.
+  useEffect(() => {
+    if (!editing && tplLoaded) {
+      setNotes((cur) => cur || template.defaultNotes);
+      setTnc((cur) => cur || template.defaultTerms);
+    }
+  }, [editing, tplLoaded, template.defaultNotes, template.defaultTerms]);
+
+  // Edit mode: load the draft.
+  useEffect(() => {
+    if (!editing) return;
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    api
+      .get<{ invoice: any; items: any[] }>(`/invoices/${id}`)
+      .then(({ invoice, items: rows }) => {
+        if (invoice.status !== "draft") {
+          toast("Only draft invoices can be edited.", "error");
+          navigate(`/invoices/${id}`, { replace: true });
+          return;
+        }
+        setNumber(invoice.number);
+        setCustId(invoice.client_id);
+        setOrderNumber(invoice.order_number ?? "");
+        setIssue(String(invoice.issue_date).slice(0, 10));
+        setTerms(invoice.terms ?? "Due on Receipt");
+        setDue(String(invoice.due_date).slice(0, 10));
+        setSubject(invoice.subject ?? "");
+        setDiscountPct(Number(invoice.discount_pct));
+        setTaxPct(Number(invoice.tax_rate));
+        setShipping(Number(invoice.shipping));
+        setAdjustment(Number(invoice.adjustment));
+        setNotes(invoice.notes ?? "");
+        setTnc(invoice.terms_conditions ?? "");
+        setLines(
+          rows.map((it: any) => ({
+            description: it.description,
+            qty: Number(it.quantity),
+            price: Number(it.unit_price),
+            unit: it.unit ?? null,
+            extra: it.extra ?? {},
+          })),
+        );
+        setLoadedExisting(true);
+      })
+      .catch((err) => {
+        toast(err instanceof Error ? err.message : "Failed to load invoice", "error");
+        navigate("/invoices", { replace: true });
+      });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+  }, [editing, id, navigate, toast]);
+
+  const customer = useMemo(
+    () => customers.find((c) => c.id === custId) ?? null,
+    [customers, custId],
   );
 
-  const [newSerial] = useState(nextInvoiceId); // lazy init — allocated once
-  const serial = existing?.id ?? newSerial;
-  const [status, setStatus] = useState<InvoiceStatus>(existing?.status ?? "draft");
-  const [custId, setCustId] = useState(existing?.customerId ?? customers[0]?.id ?? "");
-  const [terms, setTerms] = useState(existing?.terms ?? "Net 45");
-  const [issue, setIssue] = useState(existing?.issued ?? todayISO());
-  const [due, setDue] = useState(existing?.due ?? addDays(todayISO(), 45));
-  const [discountPct, setDiscountPct] = useState(existing?.discountPct ?? 5);
-  const [taxPct, setTaxPct] = useState(existing?.taxPct ?? 9);
-  const [note, setNote] = useState(
-    existing?.note ??
-      "Thank you for stocking Syruvia. Pallet ships from SG warehouse within 3 working days.",
-  );
-  const [lines, setLines] = useState<Line[]>(
-    existing?.lines.map((l) => ({ ...l })) ?? [
-      { item: "Syruvia Vanilla Syrup 750ml — case of 12", qty: 8, price: 118.8 },
-      { item: "Syruvia Hazelnut Syrup 750ml — case of 12", qty: 6, price: 118.8 },
-      { item: "Syruvia Caramel Stick Pouch 15ml — box of 100", qty: 12, price: 64.0 },
-    ],
-  );
+  function pickCustomer(cid: number) {
+    setCustId(cid);
+    const c = customers.find((x) => x.id === cid);
+    if (c && !editing) {
+      setTerms(c.terms);
+      setDue(dueDateFor(issue, c.terms, termOptions));
+    }
+  }
 
-  const customer = customerOf(customers, custId);
-  const sub = lines.reduce((s, l) => s + l.qty * l.price, 0);
-  const disc = (sub * discountPct) / 100;
-  const tax = ((sub - disc) * taxPct) / 100;
-  const grand = sub - disc + tax;
+  function onTermsChange(t: string) {
+    setTerms(t);
+    setDue(dueDateFor(issue, t, termOptions));
+  }
+
+  function onIssueChange(v: string) {
+    setIssue(v);
+    setDue(dueDateFor(v, terms, termOptions));
+  }
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((cur) => cur.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  function onTermsChange(t: string) {
-    setTerms(t);
-    setDue(addDays(issue, termDays(t)));
+  function applyItem(i: number, item: Item) {
+    setLine(i, { description: item.name, price: item.sellingPrice, unit: item.unit });
   }
 
-  function build(newStatus: InvoiceStatus) {
+  function addBulk(picked: Array<{ item: Item; qty: number }>) {
+    setLines((cur) => {
+      // Drop the single untouched empty row before appending.
+      const base =
+        cur.length === 1 && !cur[0].description.trim() && cur[0].price === 0 ? [] : cur;
+      return [
+        ...base,
+        ...picked.map((p) => ({
+          description: p.item.name,
+          qty: p.qty,
+          price: p.item.sellingPrice,
+          unit: p.item.unit,
+        })),
+      ];
+    });
+    setBulkOpen(false);
+  }
+
+  // The item table adapts to the ACTIVE template: its column labels apply,
+  // and visible unit/custom columns get inputs here so their values print.
+  const colLabel = (key: string, fallback: string) =>
+    template.columns.find((c) => c.key === key)?.label || fallback;
+  const extraCols = template.columns.filter(
+    (c) => c.show && (c.key === "unit" || c.key.startsWith("custom:")),
+  );
+
+  const sub = lines.reduce((s, l) => s + l.qty * l.price, 0);
+  const disc = (sub * discountPct) / 100;
+  const tax = ((sub - disc) * taxPct) / 100;
+  const grand = sub - disc + tax + shipping + adjustment;
+  const totalQty = lines.reduce((s, l) => s + (l.qty || 0), 0);
+
+  function buildBody(sendLaterAt: string | null = null) {
     return {
-      id: serial,
-      customerId: custId,
-      status: newStatus,
-      issued: newStatus === "draft" ? (existing?.issued ?? null) : issue,
-      due: newStatus === "draft" ? (existing?.due ?? null) : due,
+      sendLaterAt,
+      clientId: custId,
+      orderNumber: orderNumber.trim() || null,
+      issueDate: issue,
+      dueDate: due,
       terms,
-      lines: lines.filter((l) => l.item.trim() || l.qty * l.price > 0),
+      subject: subject.trim() || null,
+      currency: "USD",
+      taxRate: taxPct,
       discountPct,
-      taxPct,
-      note,
-      paidAmount: existing?.paidAmount ?? 0,
+      shipping,
+      adjustment,
+      notes: notes.trim() || null,
+      termsConditions: tnc.trim() || null,
+      items: lines
+        .filter((l) => l.description.trim())
+        .map((l) => ({
+          description: l.description.trim(),
+          quantity: l.qty,
+          unitPrice: l.price,
+          unit: l.unit || null,
+          extra: l.extra ?? {},
+        })),
     };
   }
 
-  function saveDraft() {
-    saveInvoice(build("draft"));
-    setStatus("draft");
-    if (!existing) {
-      logActivity("var(--mut-2)", [
-        { t: "Draft " },
-        { b: true, t: serial },
-        { t: ` created for ${customer.name} — awaiting review.` },
-      ]);
+  type SaveMode = "draft" | "send" | "print" | "share" | "later";
+
+  async function save(mode: SaveMode, sendLaterAt: string | null = null) {
+    if (!custId) {
+      toast("Select a customer first.", "error");
+      return;
     }
-    toast(`Draft ${serial} saved`);
+    const body = buildBody(sendLaterAt);
+    if (body.items.length === 0) {
+      toast("Add at least one line item.", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      let invId: number;
+      let invNumber: string;
+      if (editing) {
+        const res = await api.put<{ invoice: any }>(`/invoices/${id}`, body);
+        invId = res.invoice.id;
+        invNumber = res.invoice.number;
+      } else {
+        const res = await api.post<{ invoice: any }>("/invoices", body);
+        invId = res.invoice.id;
+        invNumber = res.invoice.number;
+      }
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
+      const marksSent = mode === "send" || mode === "print" || mode === "share";
+      if (marksSent) {
+        await api.patch(`/invoices/${invId}/status`, { status: "sent" });
+      }
+
+      switch (mode) {
+        case "send":
+          toast(`Invoice ${invNumber} sent to ${customer?.name ?? "customer"}`);
+          break;
+        case "print":
+          toast(`Invoice ${invNumber} saved — opening print`);
+          break;
+        case "share": {
+          const link = `${window.location.origin}/invoices/${invId}`;
+          try {
+            await navigator.clipboard.writeText(link);
+            toast(`Invoice link copied to clipboard`);
+          } catch {
+            toast(`Share link: ${link}`, "info");
+          }
+          break;
+        }
+        case "later":
+          toast(`Draft ${invNumber} scheduled to send later`);
+          break;
+        default:
+          toast(`Draft ${invNumber} saved`);
+      }
+
+      await refresh();
+      navigate(`/invoices/${invId}${mode === "print" ? "?print=1" : ""}`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to save invoice", "error");
+      setSaving(false);
+    }
   }
 
-  function sendInvoice() {
-    saveInvoice(build("due"));
-    setStatus("due");
-    logActivity("var(--green)", [
-      { t: "Invoice " },
-      { b: true, t: serial },
-      { t: ` sent to ${customer.name} — ${money(grand)}, ${terms}.` },
-    ]);
-    toast(`Invoice ${serial} sent to ${customer.name}`);
-    setTimeout(() => navigate("/invoices"), 900);
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    void save("draft");
+  }
+
+  if (!loadedExisting) {
+    return (
+      <div className="center-fill">
+        <div className="spinner" />
+      </div>
+    );
   }
 
   return (
     <section className="view">
       <div className="page-head">
         <div>
-          <h1>{existing ? serial : "New invoice"}</h1>
-          <p>Everything you type appears on the paper, live.</p>
+          <h1>{editing ? `Edit ${number}` : "New Invoice"}</h1>
+          <p>{editing ? "Editing a draft — nothing is sent until you say so." : "Fill it in — the number is assigned on save."}</p>
+        </div>
+        <div className="right">
+          <button className="btn btn-ghost" onClick={() => setCustomizing(true)}>
+            ⚙ Customize invoice
+          </button>
         </div>
       </div>
 
-      <div className="create-grid">
-        {/* form */}
-        <div className="card form-card">
-          <div className="f-sec">
-            <span className="f-lab">Bill to</span>
-            <div className="f-row">
-              <div className="field">
-                <select value={custId} onChange={(e) => setCustId(e.target.value)}>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <small>Customer</small>
-              </div>
-              <div className="field">
-                <select value={terms} onChange={(e) => onTermsChange(e.target.value)}>
-                  {TERMS.map((t) => (
-                    <option key={t}>{t}</option>
-                  ))}
-                </select>
-                <small>Payment terms</small>
-              </div>
-            </div>
-            <div className="f-row">
-              <div className="field">
-                <input type="date" value={issue} onChange={(e) => setIssue(e.target.value)} />
-                <small>Issue date</small>
-              </div>
-              <div className="field">
-                <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
-                <small>Due date</small>
-              </div>
-            </div>
+      <form className="card form-card inv-form" onSubmit={onSubmit}>
+        {/* top meta — Zoho order, labels above */}
+        <div className="f-sec">
+          <div className="f-row three">
+            <Field label="Customer name *">
+              <CustomerPicker
+                customers={customers}
+                value={custId}
+                onPick={pickCustomer}
+                onNew={() => setAddingCustomer(true)}
+              />
+            </Field>
+            <Field label="Invoice#">
+              <input value={editing ? (number ?? "") : "Auto (INV-…)"} disabled aria-label="Invoice number" />
+            </Field>
+            <Field label="Order number">
+              <input
+                placeholder="e.g. PO-89009023"
+                value={orderNumber}
+                onChange={(e) => setOrderNumber(e.target.value)}
+              />
+            </Field>
           </div>
+          <div className="f-row three">
+            <Field label="Invoice date *">
+              <DatePicker value={issue} onChange={onIssueChange} required />
+            </Field>
+            <Field label="Terms">
+              <SearchSelect
+                options={termOptions.map((t) => ({
+                  value: t.name,
+                  label: t.name,
+                  tag: t.days !== null ? `${t.days}d` : undefined,
+                }))}
+                value={terms}
+                onChange={onTermsChange}
+                footer="⊕ New Payment Term"
+                onFooter={() => setAddingTerm(true)}
+              />
+            </Field>
+            <Field label="Due date">
+              <DatePicker value={due} onChange={setDue} required />
+            </Field>
+          </div>
+          <Field label="Subject">
+            <input
+              placeholder="Let your customer know what this invoice is for"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+          </Field>
+        </div>
 
-          <div className="f-sec">
-            <span className="f-lab">Line items</span>
-            <table className="lines">
-              <thead>
-                <tr>
-                  <th style={{ width: "44%" }}>Item</th>
-                  <th>Qty</th>
-                  <th>Unit price</th>
-                  <th style={{ textAlign: "right" }}>Total</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => (
-                  <tr key={i}>
-                    <td>
-                      <input value={l.item} onChange={(e) => setLine(i, { item: e.target.value })} />
-                    </td>
-                    <td className="mono-in" style={{ width: 64 }}>
-                      <input
-                        type="number"
-                        min={0}
-                        value={l.qty}
-                        onChange={(e) => setLine(i, { qty: +e.target.value || 0 })}
-                      />
-                    </td>
-                    <td className="mono-in" style={{ width: 100 }}>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={l.price}
-                        onChange={(e) => setLine(i, { price: +e.target.value || 0 })}
-                      />
-                    </td>
-                    <td className="line-total" style={{ width: 92 }}>
-                      {money(l.qty * l.price)}
-                    </td>
-                    <td style={{ width: 30 }}>
-                      <button
-                        className="rm-line"
-                        title="Remove line"
-                        onClick={() => setLines((cur) => cur.filter((_, idx) => idx !== i))}
-                      >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
+        {/* item table */}
+        <div className="f-sec">
+          <span className="f-lab">Item table</span>
+          <table className="lines">
+            <thead>
+              <tr>
+                <th style={{ width: extraCols.length > 0 ? "36%" : "48%" }}>
+                  {colLabel("description", "Item details")}
+                </th>
+                {extraCols.map((c) => (
+                  <th key={c.key}>{c.label}</th>
                 ))}
-              </tbody>
-            </table>
+                <th style={{ textAlign: "right" }}>{colLabel("qty", "Quantity")}</th>
+                <th style={{ textAlign: "right" }}>{colLabel("rate", "Rate")}</th>
+                <th style={{ textAlign: "right" }}>{colLabel("amount", "Amount")}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i}>
+                  <td>
+                    <ItemSelect
+                      items={items}
+                      value={l.description}
+                      onText={(text) => setLine(i, { description: text })}
+                      onPick={(item) => applyItem(i, item)}
+                      onNew={() => setNewItemFor(i)}
+                    />
+                  </td>
+                  {extraCols.map((c) => (
+                    <td key={c.key} style={{ width: 90 }}>
+                      {c.key === "unit" ? (
+                        <input
+                          placeholder="pcs"
+                          value={l.unit ?? ""}
+                          onChange={(e) => setLine(i, { unit: e.target.value || null })}
+                        />
+                      ) : (
+                        <input
+                          value={l.extra?.[c.key] ?? ""}
+                          onChange={(e) =>
+                            setLine(i, { extra: { ...(l.extra ?? {}), [c.key]: e.target.value } })
+                          }
+                        />
+                      )}
+                    </td>
+                  ))}
+                  <td className="mono-in" style={{ width: 90 }}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={l.qty}
+                      onChange={(e) => setLine(i, { qty: +e.target.value || 0 })}
+                    />
+                  </td>
+                  <td className="mono-in" style={{ width: 110 }}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={l.price}
+                      onChange={(e) => setLine(i, { price: +e.target.value || 0 })}
+                    />
+                  </td>
+                  <td className="line-total" style={{ width: 100 }}>
+                    {money(l.qty * l.price)}
+                  </td>
+                  <td style={{ width: 30 }}>
+                    <button
+                      type="button"
+                      className="rm-line"
+                      title="Remove line"
+                      onClick={() => setLines((cur) => cur.filter((_, idx) => idx !== i))}
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="line-actions">
             <button
+              type="button"
               className="add-line"
-              onClick={() => setLines((cur) => [...cur, { item: "", qty: 1, price: 0 }])}
+              onClick={() => setLines((cur) => [...cur, { description: "", qty: 1, price: 0 }])}
             >
-              + Add line item
+              + Add new row
+            </button>
+            <button type="button" className="add-line" onClick={() => setBulkOpen(true)}>
+              ⊕ Add items in bulk
             </button>
           </div>
+        </div>
 
-          <div className="f-sec">
-            <div className="f-row">
-              <div className="field">
+        {/* notes + totals, Zoho arrangement */}
+        <div className="f-sec totals-sec">
+          <div>
+            <Field label="Customer notes">
+              <textarea
+                rows={3}
+                placeholder="Will be displayed on the invoice"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </Field>
+            <Field label="Terms & conditions">
+              <textarea
+                rows={4}
+                placeholder="Enter the terms and conditions of your business"
+                value={tnc}
+                onChange={(e) => setTnc(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="totals-box">
+            <div className="t-row">
+              <span>Sub Total</span>
+              <b className="num">{money(sub)}</b>
+            </div>
+            <div className="t-row">
+              <span>Discount</span>
+              <span className="t-in">
                 <input
                   type="number"
                   min={0}
@@ -233,9 +506,13 @@ export function CreateInvoice() {
                   value={discountPct}
                   onChange={(e) => setDiscountPct(+e.target.value || 0)}
                 />
-                <small>Discount %</small>
-              </div>
-              <div className="field">
+                <i>%</i>
+              </span>
+              <b className="num">−{money(disc)}</b>
+            </div>
+            <div className="t-row">
+              <span>Tax</span>
+              <span className="t-in">
                 <input
                   type="number"
                   min={0}
@@ -243,107 +520,206 @@ export function CreateInvoice() {
                   value={taxPct}
                   onChange={(e) => setTaxPct(+e.target.value || 0)}
                 />
-                <small>Tax / GST %</small>
-              </div>
+                <i>%</i>
+              </span>
+              <b className="num">{money(tax)}</b>
             </div>
-            <div className="field">
-              <textarea
-                rows={2}
-                placeholder="Note shown on the invoice…"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-              <small>Customer note</small>
+            <div className="t-row">
+              <span>Shipping charges</span>
+              <span className="t-in wide">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={shipping}
+                  onChange={(e) => setShipping(+e.target.value || 0)}
+                />
+              </span>
+              <b className="num">{money(shipping)}</b>
+            </div>
+            <div className="t-row">
+              <span>Adjustment</span>
+              <span className="t-in wide">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={adjustment}
+                  onChange={(e) => setAdjustment(+e.target.value || 0)}
+                />
+              </span>
+              <b className="num">{money(adjustment)}</b>
+            </div>
+            <div className="t-row grand">
+              <span>Total ( $ )</span>
+              <b className="num">{money(grand)}</b>
             </div>
           </div>
         </div>
 
-        {/* live paper preview */}
-        <div className="paper-wrap">
-          <div className="paper">
-            <span className={`stamp ${status} paper-stamp`}>{STATUS_LABEL[status]}</span>
-            <div className="paper-top">
-              <div className="paper-brand">
-                Fresh Finest LLC
-                <span>Syruvia wholesale · label.brecx.com</span>
-              </div>
-              <div className="serial">Nº {serial}</div>
-            </div>
-            <div className="paper-meta">
-              <div>
-                <div className="lab">Billed to</div>
-                <div className="v">
-                  {customer.name}
-                  <small>Accounts payable</small>
-                </div>
-              </div>
-              <div>
-                <div className="lab">Terms</div>
-                <div className="v">{terms}</div>
-              </div>
-              <div>
-                <div className="lab">Issued</div>
-                <div className="v">{fmtLong(issue)}</div>
-              </div>
-              <div>
-                <div className="lab">Due</div>
-                <div className="v">{fmtLong(due)}</div>
-              </div>
-            </div>
-            <table className="paper-lines">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th className="r">Qty</th>
-                  <th className="r">Price</th>
-                  <th className="r">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => (
-                  <tr key={i}>
-                    <td>{l.item || <span className="untitled">Untitled item</span>}</td>
-                    <td className="r">{l.qty}</td>
-                    <td className="r">{money(l.price)}</td>
-                    <td className="r">{money(l.qty * l.price)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="paper-sums">
-              <div>
-                <span>Subtotal</span>
-                <span>{money(sub)}</span>
-              </div>
-              <div>
-                <span>Discount</span>
-                <span>
-                  −{money(disc)} ({discountPct}%)
-                </span>
-              </div>
-              <div>
-                <span>Tax</span>
-                <span>
-                  {money(tax)} ({taxPct}%)
-                </span>
-              </div>
-              <div className="grand">
-                <span>Amount due</span>
-                <span>{money(grand)}</span>
-              </div>
-            </div>
-            <div className="paper-foot">{note || " "}</div>
+        <div className="form-foot">
+          <div className="foot-info">
+            Total amount: <b className="num">{money(grand)}</b> · quantity:{" "}
+            <b className="num">{totalQty}</b>
           </div>
-          <div className="preview-actions">
-            <button className="btn btn-ghost" onClick={saveDraft}>
-              Save draft
+          <div className="foot-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => navigate(-1)}>
+              Cancel
             </button>
-            <button className="btn btn-ink" onClick={sendInvoice}>
-              Send invoice
+            <button type="submit" className="btn btn-ghost" disabled={saving}>
+              Save as draft
             </button>
+            <div className="split-btn" ref={sendMenuRef}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={saving}
+                onClick={() => void save("send")}
+              >
+                {saving ? "Saving…" : "Save and send"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary caret"
+                disabled={saving}
+                aria-haspopup="menu"
+                aria-expanded={sendMenuOpen}
+                onClick={() => setSendMenuOpen((o) => !o)}
+              >
+                ▴
+              </button>
+              {sendMenuOpen && (
+                <div className="menu-pop up" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setSendMenuOpen(false);
+                      void save("print");
+                    }}
+                  >
+                    ⎙ Save and Print
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setSendMenuOpen(false);
+                      void save("share");
+                    }}
+                  >
+                    ↗ Save and Share
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setSendMenuOpen(false);
+                      setScheduling(true);
+                    }}
+                  >
+                    ◷ Save and Send Later
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </form>
+
+      {addingCustomer && (
+        <AddCustomerModal
+          onClose={() => setAddingCustomer(false)}
+          onAdded={async (c: Customer) => {
+            setAddingCustomer(false);
+            await refresh();
+            pickCustomer(c.id);
+            toast(`${c.name} added to customers`);
+          }}
+        />
+      )}
+
+      {addingTerm && (
+        <NewTermModal
+          onClose={() => setAddingTerm(false)}
+          onCreated={async (name, days) => {
+            setAddingTerm(false);
+            setTerms(name);
+            // Compute due directly from the fresh term — the terms list
+            // refresh below lands after this state update.
+            const d = new Date(issue + "T00:00:00");
+            d.setDate(d.getDate() + days);
+            setDue(
+              `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+            );
+            await refreshTerms();
+          }}
+        />
+      )}
+
+      {newItemFor !== null && (
+        <NewItemModal
+          initialName={lines[newItemFor]?.description ?? ""}
+          onClose={() => setNewItemFor(null)}
+          onCreated={async (item) => {
+            const idx = newItemFor;
+            setNewItemFor(null);
+            if (idx !== null) applyItem(idx, item);
+            await refresh();
+          }}
+        />
+      )}
+
+      {bulkOpen && (
+        <BulkItemsModal items={items} onClose={() => setBulkOpen(false)} onAdd={addBulk} />
+      )}
+
+      {customizing && <CustomizeDrawer onClose={() => setCustomizing(false)} />}
+
+      {scheduling && (
+        <SendLaterModal
+          onClose={() => setScheduling(false)}
+          onPick={(iso) => {
+            setScheduling(false);
+            void save("later", iso);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function SendLaterModal({
+  onClose,
+  onPick,
+}: {
+  onClose: () => void;
+  onPick: (iso: string) => void;
+}) {
+  const [date, setDate] = useState(todayISO());
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>
+          ✕
+        </button>
+        <h3>Save and Send Later</h3>
+        <div className="field lab-top">
+          <span className="f-cap">Send on</span>
+          <DatePicker value={date} onChange={setDate} />
+        </div>
+        <p className="tab-note" style={{ padding: "4px 0 0" }}>
+          The invoice is saved as a draft and marked with the send date — it shows on the
+          invoice until you send it.
+        </p>
+        <div className="modal-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => onPick(date)}>
+            Schedule
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

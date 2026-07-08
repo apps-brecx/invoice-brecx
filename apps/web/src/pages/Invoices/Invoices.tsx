@@ -3,33 +3,31 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   useBilling,
   customerOf,
-  invoiceTotals,
-  invoiceBalance,
-  daysSince,
   money,
   fmtShort,
-  type InvoiceStatus,
+  type DisplayStatus,
 } from "../../lib/store";
-import { Stamp, Cust, STATUS_LABEL } from "../../components/bits";
+import { Stamp, DueText, STATUS_LABEL } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 import { downloadCsv } from "../Dashboard/Dashboard";
 
-type Filter = "all" | InvoiceStatus;
-const FILTERS: Filter[] = ["all", "due", "overdue", "partial", "paid", "draft"];
+type Filter = "all" | DisplayStatus;
+const FILTERS: Filter[] = ["all", "due", "overdue", "partial", "paid", "draft", "void"];
 
 export function Invoices() {
-  const { customers, invoices, logActivity } = useBilling();
+  const { customers, invoices, summary, loading } = useBilling();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [params] = useSearchParams();
   const q = (params.get("q") ?? "").toLowerCase();
   const [filter, setFilter] = useState<Filter>("all");
 
-  const matchesQ = (invId: string, custName: string) =>
-    !q || invId.toLowerCase().includes(q) || custName.toLowerCase().includes(q);
-
-  const searched = invoices.filter((i) =>
-    matchesQ(i.id, customerOf(customers, i.customerId).name),
+  const searched = invoices.filter(
+    (i) =>
+      !q ||
+      i.number.toLowerCase().includes(q) ||
+      i.customerName.toLowerCase().includes(q) ||
+      (i.orderNumber ?? "").toLowerCase().includes(q),
   );
   const rows = searched.filter((i) => filter === "all" || i.status === filter);
 
@@ -40,41 +38,32 @@ export function Invoices() {
     partial: 0,
     paid: 0,
     draft: 0,
+    void: 0,
   };
   for (const i of searched) counts[i.status]++;
 
   function exportCsv() {
     downloadCsv("brecx-invoices.csv", [
-      ["No.", "Customer", "Status", "Issued", "Due", "Amount", "Balance"],
+      ["No.", "Order number", "Customer", "Status", "Issued", "Due", "Amount", "Balance"],
       ...rows.map((i) => [
-        i.id,
-        customerOf(customers, i.customerId).name,
+        i.number,
+        i.orderNumber ?? "",
+        i.customerName,
         i.status,
-        i.issued ?? "",
-        i.due ?? "",
-        invoiceTotals(i).grand.toFixed(2),
-        i.status === "draft" ? "" : invoiceBalance(i).toFixed(2),
+        i.issued,
+        i.due,
+        i.total.toFixed(2),
+        i.status === "draft" ? "" : i.balance.toFixed(2),
       ]),
     ]);
     toast(`Exported ${rows.length} invoices as CSV`);
-  }
-
-  function remind(invId: string) {
-    const inv = invoices.find((i) => i.id === invId)!;
-    const c = customerOf(customers, inv.customerId);
-    logActivity("var(--brass)", [
-      { t: "Reminder sent to " },
-      { b: true, t: c.name },
-      { t: ` for ${inv.id}${inv.status === "overdue" ? ` (${daysSince(inv.due)} days overdue)` : ""}.` },
-    ]);
-    toast(`Reminder sent to ${c.name}`);
   }
 
   return (
     <section className="view">
       <div className="page-head">
         <div>
-          <h1>Invoices</h1>
+          <h1>All Invoices</h1>
           <p>The full ledger — every invoice, filterable by state.</p>
         </div>
         <div className="right">
@@ -87,8 +76,44 @@ export function Invoices() {
         </div>
       </div>
 
+      {/* Zoho-style payment summary */}
+      <div className="cash-strip five">
+        <div className="cash-cell hero">
+          <div className="lab">Total Outstanding Receivables</div>
+          <div className="val">{money(summary.outstanding)}</div>
+          <div className="sub">
+            across <b>{summary.openCount} open invoices</b>
+          </div>
+        </div>
+        <div className="cash-cell">
+          <div className="lab">Due Today</div>
+          <div className="val">{money(summary.dueToday)}</div>
+        </div>
+        <div className="cash-cell">
+          <div className="lab">Due Within 30 Days</div>
+          <div className="val" style={{ color: "var(--brass)" }}>
+            {money(summary.due30)}
+          </div>
+        </div>
+        <div className="cash-cell">
+          <div className="lab">Overdue Invoices</div>
+          <div className="val" style={{ color: "var(--red)" }}>
+            {money(summary.overdue)}
+          </div>
+          <div className="sub">
+            <b>{summary.overdueCount}</b> past due date
+          </div>
+        </div>
+        <div className="cash-cell">
+          <div className="lab">Avg. Days to Get Paid</div>
+          <div className="val">
+            {summary.avgDaysToPay === null ? "—" : summary.avgDaysToPay.toFixed(1)}
+          </div>
+        </div>
+      </div>
+
       <div className="filter-row">
-        {FILTERS.map((f) => (
+        {FILTERS.filter((f) => f !== "void" || counts.void > 0).map((f) => (
           <button
             key={f}
             className={"chip" + (filter === f ? " on" : "")}
@@ -106,22 +131,29 @@ export function Invoices() {
 
       <div className="card">
         <div className="panel-body">
-          {rows.length === 0 ? (
+          {loading ? (
+            <div className="center-fill" style={{ minHeight: "30vh" }}>
+              <div className="spinner" />
+            </div>
+          ) : rows.length === 0 ? (
             <div className="empty-note">
-              <b>Nothing here</b>
-              No invoices match this filter{q ? " and search" : ""}.
+              <b>{invoices.length === 0 ? "No invoices yet" : "Nothing here"}</b>
+              {invoices.length === 0
+                ? "Create your first invoice to start the ledger."
+                : `No invoices match this filter${q ? " and search" : ""}.`}
             </div>
           ) : (
             <table className="ledger">
               <thead>
                 <tr>
-                  <th>No.</th>
+                  <th>Date</th>
+                  <th>Invoice#</th>
+                  <th>Order Number</th>
                   <th>Customer</th>
-                  <th>Issued</th>
-                  <th>Due</th>
-                  <th className="right">Amount</th>
-                  <th className="right">Balance</th>
                   <th>Status</th>
+                  <th>Due Date</th>
+                  <th className="right">Amount</th>
+                  <th className="right">Balance Due</th>
                   <th></th>
                 </tr>
               </thead>
@@ -130,45 +162,58 @@ export function Invoices() {
                   const c = customerOf(customers, inv.customerId);
                   const isDraft = inv.status === "draft";
                   return (
-                    <tr key={inv.id}>
-                      <td>
-                        <button className="inv-id" onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}>
-                          {inv.id}
-                        </button>
-                      </td>
-                      <td>
-                        <Cust customer={c} />
-                      </td>
+                    <tr
+                      key={inv.dbId}
+                      className="row-link"
+                      onClick={() => navigate(`/invoices/${inv.dbId}`)}
+                    >
                       <td className="num">{fmtShort(inv.issued)}</td>
-                      <td className="num">{fmtShort(inv.due)}</td>
-                      <td className="num right">{money(invoiceTotals(inv).grand)}</td>
-                      <td className="num right">{isDraft ? "—" : money(invoiceBalance(inv))}</td>
+                      <td>
+                        <span className="inv-id">{inv.number}</span>
+                      </td>
+                      <td className="num">{inv.orderNumber ?? "—"}</td>
+                      <td>
+                        <div className="cust">
+                          <div
+                            className="cust-dot"
+                            style={{ background: c.dotBg, color: c.dotFg }}
+                          >
+                            {c.name === "Unknown" ? "?" : c.name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <b>{inv.customerName}</b>
+                            <span>{inv.terms}</span>
+                          </div>
+                        </div>
+                      </td>
                       <td>
                         <Stamp status={inv.status} />
+                        <DueText status={inv.status} dueInDays={inv.dueInDays} />
                       </td>
+                      <td className="num">{fmtShort(inv.due)}</td>
+                      <td className="num right">{money(inv.total)}</td>
+                      <td className="num right">{isDraft ? "—" : money(inv.balance)}</td>
                       <td>
                         <div className="row-actions">
-                          {isDraft ? (
+                          {isDraft && (
                             <button
                               className="icon-btn"
                               title="Edit draft"
-                              onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/invoices/${inv.dbId}/edit`);
+                              }}
                             >
                               ✎
-                            </button>
-                          ) : inv.status === "paid" ? (
-                            <button className="icon-btn" title="Receipt" onClick={() => toast(`Receipt for ${inv.id} downloaded`)}>
-                              ⎙
-                            </button>
-                          ) : (
-                            <button className="icon-btn" title="Send reminder" onClick={() => remind(inv.id)}>
-                              ✉
                             </button>
                           )}
                           <button
                             className="icon-btn"
                             title="View"
-                            onClick={() => navigate(`/invoices/new?inv=${inv.id}`)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/invoices/${inv.dbId}`);
+                            }}
                           >
                             →
                           </button>
