@@ -396,7 +396,7 @@ export function CreateInvoice() {
                 <tr key={i}>
                   <td>
                     <ItemSelect
-                      items={items}
+                      items={items.filter((it) => it.active)}
                       value={l.description}
                       onText={(text) => setLine(i, { description: text })}
                       onPick={(item) => applyItem(i, item)}

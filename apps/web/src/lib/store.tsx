@@ -84,6 +84,9 @@ export interface Item {
   unit: string | null;
   sellingPrice: number;
   description: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Summary {
@@ -222,6 +225,9 @@ export function mapItem(row: any): Item {
     unit: row.unit ?? null,
     sellingPrice: num(row.selling_price),
     description: row.description ?? null,
+    active: row.active ?? true,
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

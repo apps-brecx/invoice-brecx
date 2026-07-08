@@ -6,21 +6,60 @@ import {
   money,
   fmtShort,
   type DisplayStatus,
+  type Invoice,
 } from "../../lib/store";
-import { Stamp, DueText, STATUS_LABEL } from "../../components/bits";
+import { Stamp, DueText } from "../../components/bits";
+import { Menu } from "../../components/Menu";
 import { useToast } from "../../components/Toast";
 import { downloadCsv } from "../Dashboard/Dashboard";
 
+/* Zoho-style saved views — each is a status filter with a friendly name. */
 type Filter = "all" | DisplayStatus;
-const FILTERS: Filter[] = ["all", "due", "overdue", "partial", "paid", "draft", "void"];
+const VIEWS: Array<{ key: Filter; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "draft", label: "Draft" },
+  { key: "due", label: "Unpaid" },
+  { key: "partial", label: "Partially Paid" },
+  { key: "overdue", label: "Overdue" },
+  { key: "paid", label: "Paid" },
+  { key: "void", label: "Void" },
+];
+
+type SortKey = "date" | "number" | "customer" | "amount" | "balance";
+const SORTS: Array<{ key: SortKey; label: string }> = [
+  { key: "date", label: "Created / invoice date" },
+  { key: "number", label: "Invoice#" },
+  { key: "customer", label: "Customer name" },
+  { key: "amount", label: "Amount" },
+  { key: "balance", label: "Balance due" },
+];
+
+function cmp(a: Invoice, b: Invoice, key: SortKey): number {
+  switch (key) {
+    case "date":
+      return a.issued < b.issued ? -1 : a.issued > b.issued ? 1 : 0;
+    case "number":
+      return a.number.localeCompare(b.number);
+    case "customer":
+      return a.customerName.localeCompare(b.customerName);
+    case "amount":
+      return a.total - b.total;
+    case "balance":
+      return a.balance - b.balance;
+  }
+}
 
 export function Invoices() {
-  const { customers, invoices, summary, loading } = useBilling();
+  const { customers, invoices, summary, loading, refresh } = useBilling();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [params] = useSearchParams();
   const q = (params.get("q") ?? "").toLowerCase();
   const [filter, setFilter] = useState<Filter>("all");
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [sel, setSel] = useState<Set<number>>(new Set());
 
   const searched = invoices.filter(
     (i) =>
@@ -29,23 +68,32 @@ export function Invoices() {
       i.customerName.toLowerCase().includes(q) ||
       (i.orderNumber ?? "").toLowerCase().includes(q),
   );
-  const rows = searched.filter((i) => filter === "all" || i.status === filter);
+  const counts = new Map<Filter, number>([["all", searched.length]]);
+  for (const v of VIEWS) {
+    if (v.key !== "all") counts.set(v.key, searched.filter((i) => i.status === v.key).length);
+  }
+  const rows = [...searched.filter((i) => filter === "all" || i.status === filter)].sort(
+    (a, b) => (sortDesc ? -1 : 1) * cmp(a, b, sortKey),
+  );
 
-  const counts: Record<Filter, number> = {
-    all: searched.length,
-    due: 0,
-    overdue: 0,
-    partial: 0,
-    paid: 0,
-    draft: 0,
-    void: 0,
-  };
-  for (const i of searched) counts[i.status]++;
+  const activeView = VIEWS.find((v) => v.key === filter)!;
+  const allChecked = rows.length > 0 && rows.every((r) => sel.has(r.dbId));
 
-  function exportCsv() {
+  const toggleAll = () =>
+    setSel(allChecked ? new Set() : new Set(rows.map((r) => r.dbId)));
+  const toggleOne = (id: number) =>
+    setSel((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  function exportCsv(only?: Set<number>) {
+    const list = only ? rows.filter((r) => only.has(r.dbId)) : rows;
     downloadCsv("brecx-invoices.csv", [
       ["No.", "Order number", "Customer", "Status", "Issued", "Due", "Amount", "Balance"],
-      ...rows.map((i) => [
+      ...list.map((i) => [
         i.number,
         i.orderNumber ?? "",
         i.customerName,
@@ -56,23 +104,78 @@ export function Invoices() {
         i.status === "draft" ? "" : i.balance.toFixed(2),
       ]),
     ]);
-    toast(`Exported ${rows.length} invoices as CSV`);
+    toast(`Exported ${list.length} invoice${list.length === 1 ? "" : "s"} as CSV`);
+  }
+
+  function sortBy(key: SortKey) {
+    if (key === sortKey) setSortDesc((d) => !d);
+    else {
+      setSortKey(key);
+      setSortDesc(key === "date" || key === "amount" || key === "balance");
+    }
   }
 
   return (
     <section className="view">
       <div className="page-head">
-        <div>
-          <h1>All Invoices</h1>
-          <p>The full ledger — every invoice, filterable by state.</p>
+        <div className="views-wrap">
+          <button
+            type="button"
+            className={"views-title" + (viewsOpen ? " open" : "")}
+            onClick={() => setViewsOpen((o) => !o)}
+          >
+            <h1>{activeView.key === "all" ? "All Invoices" : `${activeView.label} Invoices`}</h1>
+            <i>▾</i>
+          </button>
+          {viewsOpen && (
+            <div className="menu-pop views-pop">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  className={"menu-item" + (filter === v.key ? " active" : "")}
+                  onClick={() => {
+                    setFilter(v.key);
+                    setViewsOpen(false);
+                    setSel(new Set());
+                  }}
+                >
+                  <span className="menu-lab">{v.label}</span>
+                  <span className="menu-count">{counts.get(v.key) ?? 0}</span>
+                </button>
+              ))}
+              <div className="menu-sep" />
+              <button type="button" className="menu-item" disabled title="Custom views come with the Settings module">
+                <span className="menu-ic">＋</span>
+                <span className="menu-lab">New View</span>
+              </button>
+            </div>
+          )}
+          {viewsOpen && <div className="views-backdrop" onClick={() => setViewsOpen(false)} />}
         </div>
         <div className="right">
-          <button className="btn btn-ghost" onClick={exportCsv}>
-            Export CSV
-          </button>
           <button className="btn btn-primary" onClick={() => navigate("/invoices/new")}>
-            + New invoice
+            + New
           </button>
+          <Menu
+            align="right"
+            trigger={<button className="btn btn-ghost icon-only">⋯</button>}
+            items={[
+              { heading: "Sort by" },
+              ...SORTS.map((s) => ({
+                label: s.key === sortKey ? `${s.label} ${sortDesc ? "↓" : "↑"}` : s.label,
+                checked: s.key === sortKey,
+                onClick: () => sortBy(s.key),
+              })),
+              { sep: true },
+              { icon: "⤓", label: "Export (CSV)", onClick: () => exportCsv() },
+              { icon: "⟳", label: "Refresh List", onClick: () => void refresh() },
+              { sep: true },
+              { icon: "⤒", label: "Import Invoices", disabled: true, title: "Coming later" },
+              { icon: "⚙", label: "Preferences", disabled: true, title: "Settings module pending" },
+              { icon: "▦", label: "Manage Custom Fields", disabled: true, title: "Settings module pending" },
+            ]}
+          />
         </div>
       </div>
 
@@ -112,24 +215,26 @@ export function Invoices() {
         </div>
       </div>
 
-      <div className="filter-row">
-        {FILTERS.filter((f) => f !== "void" || counts.void > 0).map((f) => (
-          <button
-            key={f}
-            className={"chip" + (filter === f ? " on" : "")}
-            onClick={() => setFilter(f)}
-          >
-            {f === "all" ? "All" : STATUS_LABEL[f]} <span className="n">{counts[f]}</span>
-          </button>
-        ))}
-        {q && (
-          <button className="chip" onClick={() => navigate("/invoices")}>
+      {q && (
+        <div className="filter-row">
+          <button className="chip on" onClick={() => navigate("/invoices")}>
             Search: “{q}” ✕
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="card">
+        {sel.size > 0 && (
+          <div className="bulk-bar">
+            <b>{sel.size} selected</b>
+            <button className="btn btn-ghost" onClick={() => exportCsv(sel)}>
+              Export CSV
+            </button>
+            <button className="btn btn-ghost" onClick={() => setSel(new Set())}>
+              Clear
+            </button>
+          </div>
+        )}
         <div className="panel-body">
           {loading ? (
             <div className="center-fill" style={{ minHeight: "30vh" }}>
@@ -140,16 +245,19 @@ export function Invoices() {
               <b>{invoices.length === 0 ? "No invoices yet" : "Nothing here"}</b>
               {invoices.length === 0
                 ? "Create your first invoice to start the ledger."
-                : `No invoices match this filter${q ? " and search" : ""}.`}
+                : `No invoices match this view${q ? " and search" : ""}.`}
             </div>
           ) : (
             <table className="ledger">
               <thead>
                 <tr>
+                  <th className="sel-col">
+                    <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+                  </th>
                   <th>Date</th>
                   <th>Invoice#</th>
                   <th>Order Number</th>
-                  <th>Customer</th>
+                  <th>Customer Name</th>
                   <th>Status</th>
                   <th>Due Date</th>
                   <th className="right">Amount</th>
@@ -167,9 +275,19 @@ export function Invoices() {
                       className="row-link"
                       onClick={() => navigate(`/invoices/${inv.dbId}`)}
                     >
+                      <td className="sel-col" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={sel.has(inv.dbId)}
+                          onChange={() => toggleOne(inv.dbId)}
+                        />
+                      </td>
                       <td className="num">{fmtShort(inv.issued)}</td>
                       <td>
-                        <span className="inv-id">{inv.number}</span>
+                        <span className="inv-id">
+                          {inv.number}
+                          {inv.orderNumber ? ` (${inv.orderNumber})` : ""}
+                        </span>
                       </td>
                       <td className="num">{inv.orderNumber ?? "—"}</td>
                       <td>
@@ -187,12 +305,21 @@ export function Invoices() {
                         </div>
                       </td>
                       <td>
-                        <Stamp status={inv.status} />
-                        <DueText status={inv.status} dueInDays={inv.dueInDays} />
+                        {/* Zoho-style: open invoices show the countdown, others the stamp */}
+                        {inv.status === "due" || inv.status === "overdue" ? (
+                          <DueText status={inv.status} dueInDays={inv.dueInDays} />
+                        ) : inv.status === "partial" ? (
+                          <>
+                            <Stamp status={inv.status} />
+                            <DueText status={inv.status} dueInDays={inv.dueInDays} />
+                          </>
+                        ) : (
+                          <Stamp status={inv.status} />
+                        )}
                       </td>
                       <td className="num">{fmtShort(inv.due)}</td>
                       <td className="num right">{money(inv.total)}</td>
-                      <td className="num right">{isDraft ? "—" : money(inv.balance)}</td>
+                      <td className="num right">{isDraft ? money(inv.total) : money(inv.balance)}</td>
                       <td>
                         <div className="row-actions">
                           {isDraft && (

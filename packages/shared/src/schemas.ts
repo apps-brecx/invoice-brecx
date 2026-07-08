@@ -227,10 +227,19 @@ const columnSchema = z.object({
   label: z.string().trim().max(40),
   show: z.boolean(),
   /** Columns sharing a group name get a spanning header above them —
-   *  e.g. "Special Pricing" over Unit Price + Total. */
-  group: z.string().trim().max(40).optional().nullable(),
+   *  e.g. "Special Pricing" over Unit Price + Total. Text after an
+   *  em-dash ("Special Pricing — within 60 days") prints as a smaller
+   *  subtitle line inside the header band. */
+  group: z.string().trim().max(80).optional().nullable(),
   /** Column width in % of the table; null/absent = automatic. */
   width: z.coerce.number().min(4).max(80).optional().nullable(),
+  /** Body-cell fill color — tint a whole column (pricing-tier style). */
+  tint: z.string().trim().max(30).optional().nullable(),
+  /** Print a TOTAL row at the foot of the table summing this column,
+   *  as a plain count ("3,720") or as money ("$10,338.00"). */
+  total: z.enum(["count", "money"]).optional().nullable(),
+  /** Also print this column's sum as a row in the totals block. */
+  sumLabel: z.string().trim().max(80).optional().nullable(),
 });
 export type TemplateColumn = z.infer<typeof columnSchema>;
 
@@ -338,8 +347,9 @@ export const templateSettingsSchema = z.object({
   labelColor: z.string().trim().max(30).default("#8B988E"),
   font: z.enum(["sans", "serif", "mono"]).default("sans"),
   layout: z.enum(["standard", "continental", "compact"]).default("standard"),
-  /** Header arrangement: logo/org left (classic), right, or centered. */
-  headerStyle: z.enum(["logo-left", "logo-right", "centered"]).default("logo-left"),
+  /** Header arrangement: logo/org left (classic), right, centered, or
+   *  brand-left (logo with the org details stacked underneath it). */
+  headerStyle: z.enum(["logo-left", "logo-right", "centered", "brand-left"]).default("logo-left"),
   /** Item table look: accent band header, zebra rows, full grid, or minimal. */
   tableStyle: z.enum(["band", "zebra", "boxed", "minimal"]).default("band"),
   documentTitle: z.string().trim().max(60).default("INVOICE"),

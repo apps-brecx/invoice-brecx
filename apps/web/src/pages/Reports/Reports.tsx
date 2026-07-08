@@ -1,156 +1,103 @@
-import { useBilling, moneyK, money } from "../../lib/store";
-import { useToast } from "../../components/Toast";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { REPORTS, REPORT_GROUPS, COMING_SOON, type ReportDef } from "./reportDefs";
 
-interface MonthAgg {
-  key: string; // YYYY-MM
-  label: string;
-  invoiced: number;
-  collected: number;
-}
+const FAV_KEY = "brecx-report-favs";
 
-/** Last six calendar months, aggregated from the real ledger. */
-function lastSixMonths(): MonthAgg[] {
-  const months: MonthAgg[] = [];
-  const d = new Date();
-  d.setDate(1);
-  for (let i = 5; i >= 0; i--) {
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1);
-    months.push({
-      key: m.toISOString().slice(0, 7),
-      label: m.toLocaleDateString("en-US", { month: "short" }),
-      invoiced: 0,
-      collected: 0,
-    });
+function loadFavs(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]") as string[]);
+  } catch {
+    return new Set();
   }
-  return months;
 }
 
+/** Zoho-style Reports Center — searchable hub of grouped report links. */
 export function Reports() {
-  const { invoices, payments, loading } = useBilling();
-  const { toast } = useToast();
+  const navigate = useNavigate();
+  const [q, setQ] = useState("");
+  const [favs, setFavs] = useState<Set<string>>(loadFavs);
 
-  const months = lastSixMonths();
-  const byKey = new Map(months.map((m) => [m.key, m]));
-  for (const inv of invoices) {
-    if (inv.status === "draft" || inv.status === "void") continue;
-    const m = byKey.get(inv.issued.slice(0, 7));
-    if (m) m.invoiced += inv.total;
-  }
-  for (const p of payments) {
-    const m = byKey.get(p.paidOn.slice(0, 7));
-    if (m) m.collected += p.amount;
-  }
-  const max = Math.max(...months.map((m) => m.invoiced), 1);
+  const toggleFav = (key: string) => {
+    setFavs((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      localStorage.setItem(FAV_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  };
 
-  // Quarter summary — last 3 calendar months of real data.
-  const quarter = months.slice(-3);
-  const invoiced = quarter.reduce((s, m) => s + m.invoiced, 0);
-  const collected = quarter.reduce((s, m) => s + m.collected, 0);
+  const needle = q.trim().toLowerCase();
+  const match = (r: ReportDef) => !needle || r.name.toLowerCase().includes(needle);
+  const favReports = REPORTS.filter((r) => favs.has(r.key) && match(r));
 
-  const sent = invoices.filter((i) => i.status !== "draft" && i.status !== "void");
-  const byCustomer = new Map<string, number>();
-  for (const inv of sent) {
-    byCustomer.set(inv.customerName, (byCustomer.get(inv.customerName) ?? 0) + inv.total);
-  }
-  const top = [...byCustomer.entries()].sort((a, b) => b[1] - a[1])[0];
-  const avgSize = sent.length > 0 ? sent.reduce((s, i) => s + i.total, 0) / sent.length : 0;
-  const openBalance = sent.reduce((s, i) => s + i.balance, 0);
+  const row = (r: ReportDef) => (
+    <div className="rc-row" key={r.key}>
+      <button className="rc-link" title={r.desc} onClick={() => navigate(`/reports/${r.key}`)}>
+        {r.name}
+      </button>
+      <button
+        className={"rc-star" + (favs.has(r.key) ? " on" : "")}
+        title={favs.has(r.key) ? "Remove from favorites" : "Add to favorites"}
+        onClick={() => toggleFav(r.key)}
+      >
+        {favs.has(r.key) ? "★" : "☆"}
+      </button>
+    </div>
+  );
 
-  if (loading) {
-    return (
-      <div className="center-fill">
-        <div className="spinner" />
-      </div>
-    );
-  }
+  const soonRows = (items: string[], why: string) =>
+    items
+      .filter((n) => !needle || n.toLowerCase().includes(needle))
+      .map((n) => (
+        <div className="rc-row soon" key={n} title={why}>
+          <span className="rc-link">{n}</span>
+          <small>soon</small>
+        </div>
+      ));
 
   return (
-    <section className="view">
-      <div className="page-head">
-        <div>
-          <h1>Reports</h1>
-          <p>Invoiced vs collected, last six months.</p>
-        </div>
-        <div className="right">
-          <button className="btn btn-ghost" onClick={() => toast("Report PDF is coming with the Reports module")}>
-            Download PDF
-          </button>
-        </div>
+    <section className="view rc-center">
+      <h1 className="rc-title">Reports Center</h1>
+      <div className="rc-search">
+        <input placeholder="Search reports" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
 
-      <div className="report-grid">
-        <div className="card chart-card">
-          <div className="chart-legend">
-            <span>
-              <i style={{ background: "var(--bar-g1)" }} />
-              Invoiced
-            </span>
-            <span>
-              <i style={{ background: "var(--brass)" }} />
-              Collected
-            </span>
+      <div className="card rc-card">
+        {favReports.length > 0 && (
+          <div className="rc-group">
+            <h3>★ Favorites</h3>
+            <div className="rc-grid">{favReports.map(row)}</div>
           </div>
-          {sent.length === 0 ? (
-            <div className="empty-note">
-              <b>No data yet</b>
-              Send invoices and the chart draws itself.
-            </div>
-          ) : (
-            <div className="bars">
-              {months.map((m) => (
-                <div className="bar-col" key={m.key}>
-                  <div
-                    className="bar"
-                    style={{ height: `${(m.invoiced / max) * 78}%`, minHeight: m.invoiced > 0 ? 4 : 0 }}
-                  >
-                    <span className="tip">{moneyK(m.invoiced)}</span>
-                    <div
-                      className="paid-part"
-                      style={{
-                        height: `${m.invoiced > 0 ? Math.min(100, (m.collected / m.invoiced) * 100) : 0}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="bar-lab">{m.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        )}
 
-        <div className="card">
-          <div className="panel-head">
-            <h2>Last 3 months</h2>
-          </div>
-          <div className="mini-rows">
-            <div>
-              <span>Total invoiced</span>
-              <b>{money(invoiced)}</b>
+        {REPORT_GROUPS.map((g) => {
+          const rows = REPORTS.filter((r) => r.group === g && match(r));
+          const soon = COMING_SOON.find((c) => c.group === g);
+          const soonEls = soon ? soonRows(soon.items, soon.why) : [];
+          if (rows.length === 0 && soonEls.length === 0) return null;
+          return (
+            <div className="rc-group" key={g}>
+              <h3>{g}</h3>
+              <div className="rc-grid">
+                {rows.map(row)}
+                {soonEls}
+              </div>
             </div>
-            <div>
-              <span>Total collected</span>
-              <b>{money(collected)}</b>
+          );
+        })}
+
+        {COMING_SOON.filter((c) => !REPORT_GROUPS.includes(c.group)).map((c) => {
+          const soonEls = soonRows(c.items, c.why);
+          if (soonEls.length === 0) return null;
+          return (
+            <div className="rc-group" key={c.group}>
+              <h3>{c.group}</h3>
+              <div className="rc-grid">{soonEls}</div>
             </div>
-            <div>
-              <span>Collection rate</span>
-              <b style={{ color: "var(--green)" }}>
-                {invoiced > 0 ? ((collected / invoiced) * 100).toFixed(1) + "%" : "—"}
-              </b>
-            </div>
-            <div>
-              <span>Open balance</span>
-              <b>{money(openBalance)}</b>
-            </div>
-            <div>
-              <span>Top customer</span>
-              <b>{top ? top[0] : "—"}</b>
-            </div>
-            <div>
-              <span>Avg invoice size</span>
-              <b>{sent.length > 0 ? moneyK(avgSize) : "—"}</b>
-            </div>
-          </div>
-        </div>
+          );
+        })}
       </div>
     </section>
   );

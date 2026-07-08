@@ -15,6 +15,7 @@ import { InvoicePaper, type PaperData } from "../../components/InvoicePaper";
 import { Stamp, DueText } from "../../components/bits";
 import { DatePicker } from "../../components/DatePicker";
 import { ConfirmModal } from "../../components/ConfirmModal";
+import { Menu } from "../../components/Menu";
 import { useToast } from "../../components/Toast";
 
 interface DetailItem {
@@ -142,6 +143,48 @@ export function InvoiceDetail() {
       await api.del(`/payments/${pid}`);
     }, "Payment removed");
 
+  /** Zoho-style Clone — a fresh draft with the same customer, lines and
+   *  settings, dated today. */
+  const cloneInvoice = () =>
+    act(async () => {
+      if (!detail || !inv) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const span =
+        (new Date(inv.due).getTime() - new Date(inv.issued).getTime()) / 86_400_000;
+      const dueDate = new Date(Date.now() + Math.max(0, span) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const res = await api.post<{ invoice: any }>("/invoices", {
+        clientId: detail.raw.client_id,
+        orderNumber: inv.orderNumber,
+        issueDate: today,
+        dueDate,
+        terms: inv.terms,
+        subject: inv.subject,
+        taxRate: inv.taxPct,
+        discountPct: inv.discountPct,
+        shipping: inv.shipping,
+        adjustment: inv.adjustment,
+        notes: detail.raw.notes,
+        termsConditions: detail.raw.terms_conditions,
+        items: detail.items.map((it) => ({
+          description: it.description,
+          quantity: Number(it.quantity),
+          unitPrice: Number(it.unit_price),
+          unit: it.unit ?? null,
+          extra: it.extra ?? {},
+        })),
+      });
+      navigate(`/invoices/${res.invoice.id}`);
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+    }, "Invoice cloned as a new draft");
+
+  const shareLink = async () => {
+    await navigator.clipboard.writeText(window.location.href);
+    toast("Invoice link copied to clipboard");
+  };
+
   const customer = inv ? customerOf(customers, inv.customerId) : null;
 
   const paper: PaperData | null =
@@ -239,85 +282,153 @@ export function InvoiceDetail() {
                   <DueText status={inv.status} dueInDays={inv.dueInDays} />
                 </p>
               </div>
+              <button
+                className="icon-btn detail-close"
+                title="Back to the invoice list"
+                onClick={() => navigate("/invoices")}
+              >
+                ✕
+              </button>
             </div>
 
-            <div className="action-bar print-hide">
-              {inv.status === "draft" && (
-                <>
-                  <button
-                    className="btn btn-ghost"
-                    disabled={busy}
-                    onClick={() => navigate(`/invoices/${inv.dbId}/edit`)}
-                  >
-                    ✎ Edit
-                  </button>
-                  <button className="btn btn-primary" disabled={busy} onClick={markSent}>
-                    Send invoice
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    disabled={busy}
-                    onClick={() => setConfirm({ kind: "delete" })}
-                  >
-                    Delete
-                  </button>
-                </>
-              )}
-              {(inv.status === "due" || inv.status === "partial" || inv.status === "overdue") && (
-                <button
-                  className="btn btn-primary"
-                  disabled={busy}
-                  onClick={() => setPaying(true)}
-                >
-                  Record payment
-                </button>
-              )}
-              <button className="btn btn-ghost" onClick={() => window.print()}>
-                PDF / Print
-              </button>
+            {/* Zoho-style action bar: Edit · Send ▾ · Share · PDF/Print ▾ · Record Payment · ⋯ */}
+            <div className="action-bar zoho-bar print-hide">
               <button
-                className="btn btn-ghost"
-                onClick={() => navigate("/settings/template")}
+                className="btn btn-bar"
+                disabled={busy || inv.status !== "draft"}
+                title={inv.status !== "draft" ? "Only drafts can be edited" : undefined}
+                onClick={() => navigate(`/invoices/${inv.dbId}/edit`)}
               >
-                ⚙ Customize template
+                ✎ Edit
               </button>
-              {inv.status !== "draft" && inv.status !== "void" && inv.paid === 0 && (
-                <button
-                  className="btn btn-danger"
-                  disabled={busy}
-                  onClick={() => setConfirm({ kind: "void" })}
-                >
-                  Void
+              <Menu
+                trigger={
+                  <button className="btn btn-bar" disabled={busy}>
+                    ✉ Send <i className="caret">▾</i>
+                  </button>
+                }
+                items={[
+                  {
+                    icon: "✉",
+                    label: "Send Email",
+                    disabled: inv.status !== "draft",
+                    title:
+                      inv.status !== "draft"
+                        ? "Already sent"
+                        : "Marks the invoice as sent (real email goes out once the email module ships)",
+                    onClick: markSent,
+                  },
+                  { icon: "◎", label: "WhatsApp Message", disabled: true, title: "Coming later" },
+                  { icon: "🕓", label: "Schedule Email", disabled: true, title: "Coming with the email module" },
+                ]}
+              />
+              <button className="btn btn-bar" onClick={() => void shareLink()}>
+                ⇗ Share
+              </button>
+              <Menu
+                trigger={
+                  <button className="btn btn-bar">
+                    ⎙ PDF/Print <i className="caret">▾</i>
+                  </button>
+                }
+                items={[
+                  { icon: "⤓", label: "PDF", onClick: () => window.print(), title: "Print dialog → Save as PDF" },
+                  { icon: "⎙", label: "Print", onClick: () => window.print() },
+                  { sep: true },
+                  { icon: "⎙", label: "Print Delivery Note", disabled: true, title: "Coming later" },
+                  { icon: "⎙", label: "Print Packing Slip", disabled: true, title: "Coming later" },
+                ]}
+              />
+              {(inv.status === "due" || inv.status === "partial" || inv.status === "overdue") && (
+                <button className="btn btn-bar strong" disabled={busy} onClick={() => setPaying(true)}>
+                  ◉ Record Payment
                 </button>
               )}
+              <Menu
+                align="right"
+                trigger={
+                  <button className="btn btn-bar" disabled={busy}>
+                    ⋯
+                  </button>
+                }
+                items={[
+                  {
+                    icon: "✉",
+                    label: "Mark As Sent",
+                    disabled: inv.status !== "draft",
+                    onClick: markSent,
+                  },
+                  { icon: "⧉", label: "Clone", onClick: () => void cloneInvoice() },
+                  {
+                    icon: "⊘",
+                    label: "Void",
+                    disabled: inv.status === "draft" || inv.status === "void" || inv.paid > 0,
+                    title:
+                      inv.paid > 0
+                        ? "Remove its payments before voiding"
+                        : inv.status === "draft"
+                          ? "Drafts are deleted, not voided"
+                          : undefined,
+                    onClick: () => setConfirm({ kind: "void" }),
+                  },
+                  {
+                    icon: "🗑",
+                    label: "Delete",
+                    danger: true,
+                    disabled: inv.status !== "draft",
+                    title: inv.status !== "draft" ? "Only drafts can be deleted — void it instead" : undefined,
+                    onClick: () => setConfirm({ kind: "delete" }),
+                  },
+                  { sep: true },
+                  {
+                    icon: "⚙",
+                    label: "Customize Template",
+                    onClick: () => navigate("/settings/template"),
+                  },
+                ]}
+              />
             </div>
 
             {inv.status === "draft" && (
-              <div className="whats-next print-hide">
-                <b>What's next?</b>{" "}
-                {detail.raw.send_later_at ? (
-                  <>
-                    Scheduled to send on{" "}
-                    <b>{fmtLong(String(detail.raw.send_later_at).slice(0, 10))}</b> — or send it
-                    now.
-                  </>
-                ) : (
-                  <>
-                    Send this invoice to your customer — it becomes due and you can start
-                    recording payments.
-                  </>
-                )}
+              <div className="whats-next zoho-next print-hide">
+                <span>
+                  ✨ <b>WHAT'S NEXT?</b>{" "}
+                  {detail.raw.send_later_at ? (
+                    <>
+                      Scheduled to send on{" "}
+                      <b>{fmtLong(String(detail.raw.send_later_at).slice(0, 10))}</b> — or send
+                      it now.
+                    </>
+                  ) : (
+                    <>Send this Invoice to your customer or mark it as Sent.</>
+                  )}
+                </span>
+                <span className="next-actions">
+                  <button className="btn btn-primary" disabled={busy} onClick={markSent}>
+                    Send Invoice
+                  </button>
+                  <button className="btn btn-ghost" disabled={busy} onClick={markSent}>
+                    Mark As Sent
+                  </button>
+                </span>
               </div>
             )}
             {(inv.status === "due" || inv.status === "partial" || inv.status === "overdue") && (
-              <div className="whats-next print-hide">
-                <b>What's next?</b> Record payment for it as soon as you receive it.
-                {inv.paid > 0 && (
-                  <>
-                    {" "}
-                    So far <b>{money(inv.paid)}</b> of <b>{money(inv.total)}</b> received.
-                  </>
-                )}
+              <div className="whats-next zoho-next print-hide">
+                <span>
+                  ✨ <b>WHAT'S NEXT?</b> Record payment for it as soon as you receive it.
+                  {inv.paid > 0 && (
+                    <>
+                      {" "}
+                      So far <b>{money(inv.paid)}</b> of <b>{money(inv.total)}</b> received.
+                    </>
+                  )}
+                </span>
+                <span className="next-actions">
+                  <button className="btn btn-primary" disabled={busy} onClick={() => setPaying(true)}>
+                    Record Payment
+                  </button>
+                </span>
               </div>
             )}
 

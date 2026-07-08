@@ -315,8 +315,8 @@ function NewTemplateModal({
 
 /* =================== Block text editor =================== */
 
-/** "✎ Text" on a selected preview block — edit exactly that block's texts,
- *  labels and per-block field toggles in one place. */
+/** "✎ Edit" on a selected preview block — texts, labels, per-block field
+ *  toggles AND placement/styling for exactly that block, in one modal. */
 function BlockTextModal({
   blockKey,
   tpl,
@@ -330,6 +330,13 @@ function BlockTextModal({
   onLogoPick: (file: File | undefined) => void;
   onClose: () => void;
 }) {
+  type Block = TemplateSettings["blocks"][number];
+  const block = tpl.blocks.find((b) => b.key === blockKey);
+  const patchBlock = (patch: Partial<Block>) =>
+    set(
+      "blocks",
+      tpl.blocks.map((b) => (b.key === blockKey ? { ...b, ...patch } : b)),
+    );
   const logoRef = useRef<HTMLInputElement>(null);
   const L = tpl.labels;
   const setL = (k: keyof Labels, v: string) => set("labels", { ...tpl.labels, [k]: v });
@@ -647,8 +654,100 @@ function BlockTextModal({
         <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>
           ✕
         </button>
-        <h3>Edit texts — {BLOCK_NAMES[blockKey as BlockKey] ?? blockKey}</h3>
+        <h3>Edit — {BLOCK_NAMES[blockKey as BlockKey] ?? blockKey}</h3>
         {body}
+        {block && (
+          <>
+            <div className="modal-sub">Placement & styling</div>
+            <div className="block-style in-modal">
+              <div className="bs-field">
+                <input
+                  type="number"
+                  min={30}
+                  max={100}
+                  value={block.w}
+                  onChange={(e) => patchBlock({ w: +e.target.value || 100 })}
+                />
+                <small>Width (%)</small>
+              </div>
+              <div className="bs-field">
+                <select
+                  value={block.pos}
+                  onChange={(e) => patchBlock({ pos: e.target.value as Block["pos"] })}
+                  disabled={block.w >= 100}
+                  title={block.w >= 100 ? "Set width below 100% to position the block" : undefined}
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+                <small>Position</small>
+              </div>
+              <div className="bs-field">
+                <input
+                  type="number"
+                  min={0}
+                  max={60}
+                  value={block.pad}
+                  onChange={(e) => patchBlock({ pad: +e.target.value || 0 })}
+                />
+                <small>Padding (px)</small>
+              </div>
+              <div className="bs-field">
+                <input
+                  type="number"
+                  min={70}
+                  max={140}
+                  value={block.size}
+                  onChange={(e) => patchBlock({ size: +e.target.value || 100 })}
+                />
+                <small>Text size (%)</small>
+              </div>
+              <div className="bs-field">
+                <select
+                  value={block.align}
+                  onChange={(e) => patchBlock({ align: e.target.value as Block["align"] })}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+                <small>Align</small>
+              </div>
+              <div className="bs-field">
+                <div className="bs-color">
+                  <input
+                    type="color"
+                    value={block.color || "#1e2227"}
+                    onChange={(e) => patchBlock({ color: e.target.value })}
+                  />
+                  {block.color && (
+                    <button type="button" className="link-btn" onClick={() => patchBlock({ color: "" })}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <small>Text color</small>
+              </div>
+              <div className="bs-field">
+                <div className="bs-color">
+                  <input
+                    type="color"
+                    value={block.bg || "#ffffff"}
+                    onChange={(e) => patchBlock({ bg: e.target.value })}
+                  />
+                  {block.bg && (
+                    <button type="button" className="link-btn" onClick={() => patchBlock({ bg: "" })}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <small>Background</small>
+              </div>
+            </div>
+          </>
+        )}
         <div className="modal-actions">
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done
@@ -771,13 +870,9 @@ function TemplateStudio({
     }
   }
 
-  // Clicking a block on the preview selects it in the Blocks section.
+  // Clicking a block on the preview selects it (toolbar appears on it).
   function selectFromPreview(key: string) {
     setOpenBlock(key);
-    setOpenSecs((cur) => new Set(cur).add("blocks"));
-    panelRef.current
-      ?.querySelector(`[data-block-row="${key}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function hideBlockByKey(key: string) {
@@ -806,6 +901,11 @@ function TemplateStudio({
       set(
         "columns",
         tpl.columns.map((c) => ((c.group ?? "") === key ? { ...c, group: value || null } : c)),
+      );
+    } else if (kind === "sumlab") {
+      set(
+        "columns",
+        tpl.columns.map((c) => (c.key === key ? { ...c, sumLabel: value || null } : c)),
       );
     }
   }
@@ -1012,6 +1112,7 @@ function TemplateStudio({
                   <option value="logo-left">Logo left (classic)</option>
                   <option value="logo-right">Logo right</option>
                   <option value="centered">Centered</option>
+                  <option value="brand-left">Brand left (stacked)</option>
                 </select>
                 <small>Header style</small>
               </div>
@@ -1079,10 +1180,31 @@ function TemplateStudio({
             </div>
           </Sec>
 
-          <Sec id="blocks" title="Layout blocks — placement & styling" openSecs={openSecs} onToggle={toggleSec}>
+          <Sec id="blocks" title="Layout blocks" openSecs={openSecs} onToggle={toggleSec}>
             <p className="tab-note" style={{ padding: "0 0 8px" }}>
-              Click a section on the paper, or pick below. Everything can be removed.
+              Everything is edited on the paper: click a section to select it, then
+              <b> ✎ Edit</b> opens its editor (texts + styling), <b>⠿</b> drags it to a
+              new position, <b>🗑</b> removes it. Removed things come back from here.
             </p>
+            {tpl.blocks.some((b) => !b.show) && (
+              <div className="hidden-chips">
+                <small>Removed sections — click to restore:</small>
+                <div>
+                  {tpl.blocks.map((b, i) =>
+                    b.show ? null : (
+                      <button
+                        key={b.key}
+                        type="button"
+                        className="chip"
+                        onClick={() => setBlock(i, { show: true })}
+                      >
+                        {BLOCK_NAMES[b.key as BlockKey] ?? b.key} ↩
+                      </button>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
             {tpl.hidden.length > 0 && (
               <div className="hidden-chips">
                 <small>Removed items — click to restore:</small>
@@ -1095,159 +1217,6 @@ function TemplateStudio({
                 </div>
               </div>
             )}
-            {tpl.blocks.map((b, i) => {
-              const locked = REQUIRED_BLOCKS.has(b.key);
-              const open = openBlock === b.key;
-              return (
-                <div
-                  className={
-                    "block-row" +
-                    (open ? " open" : "") +
-                    (dragOverRow === `block:${b.key}` ? " drag-over" : "")
-                  }
-                  key={b.key}
-                  data-block-row={b.key}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragOverRow(`block:${b.key}`);
-                  }}
-                  onDragLeave={() => setDragOverRow(null)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragOverRow(null);
-                    const from = e.dataTransfer.getData("text/block-key");
-                    if (from && from !== b.key) reorderBlocks(from, b.key);
-                  }}
-                >
-                  <div className="block-head">
-                    <span
-                      className="drag-handle"
-                      title="Drag to reorder"
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("text/block-key", b.key);
-                        e.dataTransfer.effectAllowed = "move";
-                      }}
-                    >
-                      ⠿
-                    </span>
-                    <label className="check" title={locked ? "Required — always printed" : undefined}>
-                      <input
-                        type="checkbox"
-                        checked={b.show}
-                        disabled={locked}
-                        onChange={(e) => setBlock(i, { show: e.target.checked })}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="block-name"
-                      onClick={() => setOpenBlock(open ? null : b.key)}
-                    >
-                      {BLOCK_NAMES[b.key as BlockKey] ?? b.key}
-                      {locked && <i className="block-lock">🔒</i>}
-                    </button>
-                    <button
-                      type="button"
-                      className={"icon-btn" + (open ? " on" : "")}
-                      title="Style this block"
-                      onClick={() => setOpenBlock(open ? null : b.key)}
-                    >
-                      ⚙
-                    </button>
-                  </div>
-                  {open && (
-                    <div className="block-style">
-                      <div className="bs-field">
-                        <input
-                          type="number"
-                          min={30}
-                          max={100}
-                          value={b.w}
-                          onChange={(e) => setBlock(i, { w: +e.target.value || 100 })}
-                        />
-                        <small>Width (%)</small>
-                      </div>
-                      <div className="bs-field">
-                        <select
-                          value={b.pos}
-                          onChange={(e) => setBlock(i, { pos: e.target.value as Block["pos"] })}
-                          disabled={b.w >= 100}
-                          title={b.w >= 100 ? "Set width below 100% to position the block" : undefined}
-                        >
-                          <option value="left">Left</option>
-                          <option value="center">Center</option>
-                          <option value="right">Right</option>
-                        </select>
-                        <small>Position</small>
-                      </div>
-                      <div className="bs-field">
-                        <input
-                          type="number"
-                          min={0}
-                          max={60}
-                          value={b.pad}
-                          onChange={(e) => setBlock(i, { pad: +e.target.value || 0 })}
-                        />
-                        <small>Padding (px)</small>
-                      </div>
-                      <div className="bs-field">
-                        <input
-                          type="number"
-                          min={70}
-                          max={140}
-                          value={b.size}
-                          onChange={(e) => setBlock(i, { size: +e.target.value || 100 })}
-                        />
-                        <small>Text size (%)</small>
-                      </div>
-                      <div className="bs-field">
-                        <select
-                          value={b.align}
-                          onChange={(e) => setBlock(i, { align: e.target.value as Block["align"] })}
-                        >
-                          <option value="auto">Auto</option>
-                          <option value="left">Left</option>
-                          <option value="center">Center</option>
-                          <option value="right">Right</option>
-                        </select>
-                        <small>Align</small>
-                      </div>
-                      <div className="bs-field">
-                        <div className="bs-color">
-                          <input
-                            type="color"
-                            value={b.color || "#1e2227"}
-                            onChange={(e) => setBlock(i, { color: e.target.value })}
-                          />
-                          {b.color && (
-                            <button type="button" className="link-btn" onClick={() => setBlock(i, { color: "" })}>
-                              ✕
-                            </button>
-                          )}
-                        </div>
-                        <small>Text color</small>
-                      </div>
-                      <div className="bs-field">
-                        <div className="bs-color">
-                          <input
-                            type="color"
-                            value={b.bg || "#ffffff"}
-                            onChange={(e) => setBlock(i, { bg: e.target.value })}
-                          />
-                          {b.bg && (
-                            <button type="button" className="link-btn" onClick={() => setBlock(i, { bg: "" })}>
-                              ✕
-                            </button>
-                          )}
-                        </div>
-                        <small>Background</small>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
           </Sec>
 
           <Sec id="columns" title="Item table columns" openSecs={openSecs} onToggle={toggleSec}>
@@ -1318,6 +1287,18 @@ function TemplateStudio({
                     value={col.width ?? ""}
                     onChange={(e) => setCol(i, { width: e.target.value ? +e.target.value : null })}
                   />
+                  <select
+                    className="col-sum"
+                    title="Sum this column in a TOTAL row at the foot of the table — as a count (Σ #) or as money (Σ $)"
+                    value={col.total ?? ""}
+                    onChange={(e) =>
+                      setCol(i, { total: (e.target.value || null) as TemplateSettings["columns"][number]["total"] })
+                    }
+                  >
+                    <option value="">Σ off</option>
+                    <option value="count">Σ #</option>
+                    <option value="money">Σ $</option>
+                  </select>
                   <span className="col-key">
                     {isCustom ? "custom" : col.key}
                     {locked && " 🔒"}

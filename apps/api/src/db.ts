@@ -187,6 +187,9 @@ export async function initSchema(): Promise<void> {
     );
   `);
   await query(`CREATE INDEX IF NOT EXISTS items_name_idx ON items (LOWER(name));`);
+  // Zoho-style active/inactive flag — inactive items stay on record but are
+  // hidden from the invoice form's item picker.
+  await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;`);
 
   // Generic key/value app settings (runtime toggles, defaults).
   await query(`
@@ -218,30 +221,103 @@ async function seedTemplates(): Promise<void> {
   const { rows } = await query<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM invoice_templates`,
   );
-  if (rows[0].n > 0) return;
+  if (rows[0].n === 0) {
+    let base: Record<string, unknown> = {};
+    const legacy = await query<{ value: string | null }>(
+      `SELECT value FROM app_settings WHERE key = 'invoice_template'`,
+    );
+    if (legacy.rows[0]?.value) {
+      try {
+        base = JSON.parse(legacy.rows[0].value);
+      } catch {
+        base = {};
+      }
+    }
 
-  let base: Record<string, unknown> = {};
-  const legacy = await query<{ value: string | null }>(
-    `SELECT value FROM app_settings WHERE key = 'invoice_template'`,
-  );
-  if (legacy.rows[0]?.value) {
-    try {
-      base = JSON.parse(legacy.rows[0].value);
-    } catch {
-      base = {};
+    const seed: Array<[string, string, boolean]> = [
+      ["Standard Template", "standard", true],
+      ["Continental", "continental", false],
+      ["Compact", "compact", false],
+    ];
+    for (const [name, layout, active] of seed) {
+      const settings = templateSettingsSchema.parse({ ...base, layout });
+      await query(
+        `INSERT INTO invoice_templates (name, settings, is_active) VALUES ($1, $2, $3)`,
+        [name, JSON.stringify(settings), active],
+      );
     }
   }
 
-  const seed: Array<[string, string, boolean]> = [
-    ["Standard Template", "standard", true],
-    ["Continental", "continental", false],
-    ["Compact", "compact", false],
-  ];
-  for (const [name, layout, active] of seed) {
-    const settings = templateSettingsSchema.parse({ ...base, layout });
-    await query(
-      `INSERT INTO invoice_templates (name, settings, is_active) VALUES ($1, $2, $3)`,
-      [name, JSON.stringify(settings), active],
-    );
+  await ensurePresetTemplate("Dual Pricing", DUAL_PRICING_PRESET);
+}
+
+/** Wholesale two-tier pricing paper (Special vs Adjusted columns with
+ *  spanning group headers). qty/rate/amount stay bound to the Special
+ *  tier so invoice math and Balance Due keep working; the Adjusted tier
+ *  is typed per line into custom columns. */
+const DUAL_PRICING_PRESET: Record<string, unknown> = {
+  layout: "standard",
+  tableStyle: "zebra",
+  headerStyle: "brand-left",
+  accent: "#4A4A4C",
+  labelColor: "#9A9A9A",
+  documentTitle: "Invoice",
+  showDiscountRow: false,
+  showShippingRow: false,
+  hidden: ["sum:subTotal", "sum:tax", "sum:total"],
+  columns: [
+    { key: "index", label: "#", show: false },
+    { key: "description", label: "Product Description", show: true, width: 24 },
+    { key: "custom:units_per_box", label: "Units Per Box", show: true, width: 8 },
+    { key: "qty", label: "Total Unit", show: true, width: 8, total: "count", sumLabel: "Total Units" },
+    { key: "custom:total_box", label: "Total Box", show: true, width: 8, total: "count", sumLabel: "Total Boxes" },
+    { key: "unit", label: "Unit", show: false },
+    {
+      key: "rate", label: "Unit Price", show: true, width: 11,
+      group: "Special Pricing — Payment Completed Within 60 Days", tint: "#FAF4EA",
+    },
+    {
+      key: "amount", label: "Total", show: true, width: 13,
+      group: "Special Pricing — Payment Completed Within 60 Days", tint: "#FAF4EA",
+      total: "money", sumLabel: "Special Pricing — if paid within 60 days",
+    },
+    {
+      key: "custom:adj_rate", label: "Unit Price", show: true, width: 11,
+      group: "Adjusted Pricing — Payment After 60 Days",
+    },
+    {
+      key: "custom:adj_total", label: "Total", show: true, width: 13,
+      group: "Adjusted Pricing — Payment After 60 Days",
+      total: "money", sumLabel: "Adjusted Pricing — if paid after 60 days",
+    },
+  ],
+  defaultTerms:
+    "Payment terms: The Special Pricing column applies when payment is completed within 60 days of the invoice date. " +
+    "If payment is received after 60 days, the Adjusted Pricing column applies.",
+  footerNote: "Thanks for your business",
+};
+
+/** Ship a new gallery preset to existing installs: insert by name if
+ *  missing, inheriting the active template's branding (org + logo). */
+async function ensurePresetTemplate(
+  name: string,
+  overrides: Record<string, unknown>,
+): Promise<void> {
+  const existing = await query(`SELECT 1 FROM invoice_templates WHERE name = $1`, [name]);
+  if (existing.rows.length > 0) return;
+
+  const active = await query<{ settings: Record<string, unknown> | null }>(
+    `SELECT settings FROM invoice_templates WHERE is_active LIMIT 1`,
+  );
+  const brand = active.rows[0]?.settings ?? {};
+  const branding: Record<string, unknown> = {};
+  for (const key of ["orgName", "orgTagline", "orgAddress", "orgPhone", "orgEmail", "logoDataUrl", "showLogo"]) {
+    if (brand[key] !== undefined) branding[key] = brand[key];
   }
+
+  const settings = templateSettingsSchema.parse({ ...branding, ...overrides });
+  await query(
+    `INSERT INTO invoice_templates (name, settings, is_active) VALUES ($1, $2, FALSE)`,
+    [name, JSON.stringify(settings)],
+  );
 }

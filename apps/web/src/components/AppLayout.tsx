@@ -48,6 +48,10 @@ export function AppLayout() {
             <DashIcon />
             <span className="t">Dashboard</span>
           </NavLink>
+          <NavLink to="/items">
+            <ItemsIcon />
+            <span className="t">Items</span>
+          </NavLink>
           <NavLink to="/invoices" end>
             <InvoiceIcon />
             <span className="t">Invoices</span>
@@ -146,6 +150,8 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/invoices/new")) return "New invoice";
   if (pathname.startsWith("/invoices")) return "Invoices";
   if (pathname.startsWith("/customers")) return "Customers";
+  if (pathname.startsWith("/items/new")) return "New item";
+  if (pathname.startsWith("/items")) return "Items";
   if (pathname.startsWith("/reports")) return "Reports";
   if (pathname.startsWith("/payments")) return "Payments";
   if (pathname.startsWith("/settings/template")) return "Invoice template";
@@ -198,6 +204,14 @@ function CustomersIcon() {
       <path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5" />
       <circle cx="17.5" cy="9" r="2.5" />
       <path d="M16 14.7c2.6.3 4.7 2 5.5 4.8" />
+    </svg>
+  );
+}
+function ItemsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" />
+      <path d="M3 8l9 5 9-5M12 13v8" />
     </svg>
   );
 }

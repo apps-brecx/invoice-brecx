@@ -54,8 +54,16 @@ export const SAMPLE_PAPER: PaperData = {
   customerAddress: ["Street address", "City, State"],
   shipToAddress: ["Warehouse address", "City, State"],
   lines: [
-    { description: "Item description", qty: 2, price: 120, unit: "box", extra: {} },
-    { description: "Another line item", qty: 1, price: 80, unit: "pcs", extra: {} },
+    // extra carries demo values for the custom columns used by the
+    // starter presets (unknown keys are simply ignored by other templates).
+    {
+      description: "Item description", qty: 2, price: 120, unit: "box",
+      extra: { "custom:units_per_box": "12", "custom:total_box": "10", "custom:adj_rate": "$130.00", "custom:adj_total": "$260.00" },
+    },
+    {
+      description: "Another line item", qty: 1, price: 80, unit: "pcs",
+      extra: { "custom:units_per_box": "24", "custom:total_box": "5", "custom:adj_rate": "$95.00", "custom:adj_total": "$95.00" },
+    },
   ],
   discountPct: 5,
   taxPct: 9,
@@ -131,17 +139,51 @@ function blockStyle(b: TemplateSettings["blocks"][number]): CSSProperties {
   return s;
 }
 
-/** Group header cells: consecutive visible columns sharing a `group`
- *  collapse into one spanning cell (dual-pricing style). */
-function groupSpans(cols: TemplateSettings["columns"]) {
-  const out: Array<{ label: string | null; span: number }> = [];
+type PaperColumn = TemplateSettings["columns"][number];
+
+/** Header segments: consecutive visible columns sharing a `group` merge
+ *  into one spanning cell; ungrouped columns each stand alone and span
+ *  both header rows, so the whole thead reads as one solid band. */
+function headSegments(cols: PaperColumn[]) {
+  const out: Array<{ group: string | null; cols: PaperColumn[] }> = [];
   for (const c of cols) {
     const g = c.group?.trim() || null;
     const last = out[out.length - 1];
-    if (last && last.label !== null && last.label === g) last.span++;
-    else out.push({ label: g, span: 1 });
+    if (last && last.group !== null && last.group === g) last.cols.push(c);
+    else out.push({ group: g, cols: [c] });
   }
   return out;
+}
+
+/** "Special Pricing — within 60 days" → bold title + small subtitle. */
+function GroupLabel({ text }: { text: string }) {
+  const i = text.indexOf("—");
+  if (i < 0) return <>{text}</>;
+  return (
+    <>
+      <span className="g-title">{text.slice(0, i).trim()}</span>
+      <span className="g-sub">{text.slice(i + 1).trim()}</span>
+    </>
+  );
+}
+
+/** Numeric value one line contributes to a column's TOTAL row. */
+function lineColValue(key: string, l: PaperLine): number | null {
+  if (key === "qty") return l.qty;
+  if (key === "rate") return l.price;
+  if (key === "amount") return l.qty * l.price;
+  if (key.startsWith("custom:")) {
+    const raw = (l.extra?.[key] ?? "").replace(/[^0-9.-]/g, "");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function colTotalText(c: PaperColumn, lines: PaperLine[]): string {
+  const sum = lines.reduce((s, l) => s + (lineColValue(c.key, l) ?? 0), 0);
+  return c.total === "money" ? money(sum) : sum.toLocaleString("en-US");
 }
 
 export interface PaperSelectable {
@@ -404,44 +446,84 @@ export function InvoicePaper({
           {acts?.onAddColumn && <col style={{ width: 28 }} />}
         </colgroup>
         <thead>
-          {cols.some((c) => c.group?.trim()) && (
-            <tr className="pp-group-row">
-              {groupSpans(cols).map((g, i) => (
-                <th key={i} colSpan={g.span} className={g.label ? "g" : "empty"}>
-                  {g.label ? (
-                    <Ed path={`grp:${g.label}`} value={g.label} acts={acts} />
+          {cols.some((c) => c.group?.trim()) ? (
+            <>
+              <tr className="pp-group-row">
+                {headSegments(cols).map((s, i) =>
+                  s.group === null ? (
+                    s.cols.map((c) => (
+                      <th
+                        key={c.key}
+                        rowSpan={2}
+                        className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
+                      >
+                        <Ed path={`col:${c.key}`} value={c.label} acts={acts} />
+                      </th>
+                    ))
                   ) : (
-                    ""
-                  )}
+                    <th key={`g-${i}`} colSpan={s.cols.length} className="g">
+                      {acts ? (
+                        <Ed path={`grp:${s.group}`} value={s.group} acts={acts} />
+                      ) : (
+                        <GroupLabel text={s.group} />
+                      )}
+                    </th>
+                  ),
+                )}
+                {acts?.onAddColumn && (
+                  <th className="pp-addcol" rowSpan={2}>
+                    <button
+                      type="button"
+                      title="Add custom column"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        acts.onAddColumn!();
+                      }}
+                    >
+                      +
+                    </button>
+                  </th>
+                )}
+              </tr>
+              <tr className="pp-sub-row">
+                {cols
+                  .filter((c) => c.group?.trim())
+                  .map((c) => (
+                    <th
+                      key={c.key}
+                      className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
+                    >
+                      <Ed path={`col:${c.key}`} value={c.label} acts={acts} />
+                    </th>
+                  ))}
+              </tr>
+            </>
+          ) : (
+            <tr>
+              {cols.map((c) => (
+                <th
+                  key={c.key}
+                  className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
+                >
+                  <Ed path={`col:${c.key}`} value={c.label} acts={acts} />
                 </th>
               ))}
-              {acts?.onAddColumn && <th className="empty" />}
+              {acts?.onAddColumn && (
+                <th className="pp-addcol">
+                  <button
+                    type="button"
+                    title="Add custom column"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      acts.onAddColumn!();
+                    }}
+                  >
+                    +
+                  </button>
+                </th>
+              )}
             </tr>
           )}
-          <tr>
-            {cols.map((c) => (
-              <th
-                key={c.key}
-                className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
-              >
-                <Ed path={`col:${c.key}`} value={c.label} acts={acts} />
-              </th>
-            ))}
-            {acts?.onAddColumn && (
-              <th className="pp-addcol">
-                <button
-                  type="button"
-                  title="Add custom column"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    acts.onAddColumn!();
-                  }}
-                >
-                  +
-                </button>
-              </th>
-            )}
-          </tr>
         </thead>
         <tbody>
           {data.lines.map((l, i) => (
@@ -450,6 +532,7 @@ export function InvoicePaper({
                 <td
                   key={c.key}
                   className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
+                  style={c.tint ? { background: c.tint } : undefined}
                 >
                   {cellValue(c.key, l, i)}
                 </td>
@@ -470,6 +553,19 @@ export function InvoicePaper({
               )}
             </tr>
           ))}
+          {cols.some((c) => c.total) && (
+            <tr className="pp-total-row">
+              {cols.map((c, i) => (
+                <td
+                  key={c.key}
+                  className={RIGHT_COLS.has(c.key) ? "r" : CENTER_COLS.has(c.key) ? "c" : undefined}
+                >
+                  {i === 0 ? L.total : c.total ? colTotalText(c, data.lines) : ""}
+                </td>
+              ))}
+              {acts?.onRemoveSampleRow && <td className="pp-rowdel" />}
+            </tr>
+          )}
           {acts?.onAddSampleRow && (
             <tr className="pp-addrow">
               <td colSpan={cols.length + 1}>
@@ -509,6 +605,16 @@ export function InvoicePaper({
           </div>
         )}
         <div className="pp-sums">
+          {cols
+            .filter((c) => c.total && c.sumLabel?.trim())
+            .map((c) => (
+              <div key={c.key}>
+                <span>
+                  <Ed path={`sumlab:${c.key}`} value={c.sumLabel!} acts={acts} />
+                </span>
+                <span>{colTotalText(c, data.lines)}</span>
+              </div>
+            ))}
           {!hid.has("sum:subTotal") && (
             <div className="pp-el">
               <ElX id="sum:subTotal" acts={acts} />
@@ -808,8 +914,8 @@ export function InvoicePaper({
             >
               {sel && acts && (
                 <div className="pp-toolbar" onClick={(e) => e.stopPropagation()}>
-                  <button type="button" title="Edit texts" onClick={() => acts.onEditText(b.key)}>
-                    ✎ Text
+                  <button type="button" title="Edit this section — texts & styling" onClick={() => acts.onEditText(b.key)}>
+                    ✎ Edit
                   </button>
                   <span
                     className="pp-drag"
