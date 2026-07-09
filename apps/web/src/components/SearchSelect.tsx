@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export interface SSOption {
   value: string;
@@ -32,10 +33,26 @@ export function SearchSelect({
   footer?: string;
   onFooter?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  // The pop renders into <body> via a portal (fixed position) so it can never
+  // be clipped or overpainted inside modals/scroll containers.
+  const [box, setBox] = useState<DOMRect | null>(null);
+  const [up, setUp] = useState(false);
+  const open = box !== null;
   const [q, setQ] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const toggle = () => {
+    if (open) {
+      setBox(null);
+      return;
+    }
+    const r = rootRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setUp(window.innerHeight - r.bottom < 330);
+    setBox(r);
+  };
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -51,22 +68,30 @@ export function SearchSelect({
     if (!open) return;
     searchRef.current?.focus();
     function onDown(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!rootRef.current?.contains(t) && !popRef.current?.contains(t)) setBox(null);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") setBox(null);
+    }
+    // Fixed-positioned pop would drift when the container scrolls — close it.
+    function onScroll(e: Event) {
+      if (popRef.current?.contains(e.target as Node)) return; // the list itself scrolls
+      setBox(null);
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open]);
 
   function pick(v: string) {
     onChange(v);
-    setOpen(false);
+    setBox(null);
     setQ("");
   }
 
@@ -77,7 +102,7 @@ export function SearchSelect({
       <button
         type="button"
         className={"ss-btn" + (shown ? "" : " placeholder")}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -86,8 +111,22 @@ export function SearchSelect({
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
-      {open && (
-        <div className="ss-pop" role="listbox">
+      {open &&
+        box &&
+        createPortal(
+        <div
+          ref={popRef}
+          className="ss-pop"
+          role="listbox"
+          style={{
+            position: "fixed",
+            left: Math.max(8, Math.min(box.left, window.innerWidth - 300)),
+            minWidth: Math.max(230, box.width),
+            ...(up
+              ? { bottom: window.innerHeight - box.top + 6, top: "auto" }
+              : { top: box.bottom + 6 }),
+          }}
+        >
           <div className="picker-search">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="7" />
@@ -130,14 +169,15 @@ export function SearchSelect({
               type="button"
               className="picker-new"
               onClick={() => {
-                setOpen(false);
+                setBox(null);
                 onFooter();
               }}
             >
               {footer}
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

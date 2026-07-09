@@ -10,7 +10,7 @@ import {
   type Invoice,
   type Payment,
 } from "../../lib/store";
-import { Stamp, Cust } from "../../components/bits";
+import { Stamp, Cust, KpiIcon } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 
 interface FeedItem {
@@ -150,6 +150,9 @@ export function Dashboard() {
 
       <div className="cash-strip">
         <div className="cash-cell hero">
+          <span className="kpi-ic">
+            <KpiIcon name="banknote" />
+          </span>
           <div className="lab">Outstanding</div>
           <div className="val">{money(summary.outstanding)}</div>
           <div className="sub">
@@ -157,6 +160,9 @@ export function Dashboard() {
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic r">
+            <KpiIcon name="alert" />
+          </span>
           <div className="lab">Overdue</div>
           <div className="val" style={{ color: "var(--red)" }}>
             {money(summary.overdue)}
@@ -166,6 +172,9 @@ export function Dashboard() {
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic">
+            <KpiIcon name="check" />
+          </span>
           <div className="lab">Collected · {monthName}</div>
           <div className="val" style={{ color: "var(--green)" }}>
             {money(collectedThisMonth)}
@@ -175,6 +184,9 @@ export function Dashboard() {
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic b">
+            <KpiIcon name="clock" />
+          </span>
           <div className="lab">Avg. days to pay</div>
           <div className="val">
             {summary.avgDaysToPay === null ? "—" : summary.avgDaysToPay.toFixed(1)}

@@ -8,7 +8,7 @@ import {
   type DisplayStatus,
   type Invoice,
 } from "../../lib/store";
-import { Stamp, DueText } from "../../components/bits";
+import { Stamp, DueText, KpiIcon } from "../../components/bits";
 import { Menu } from "../../components/Menu";
 import { useToast } from "../../components/Toast";
 import { downloadCsv } from "../Dashboard/Dashboard";
@@ -183,6 +183,9 @@ export function Invoices() {
       {/* Zoho-style payment summary */}
       <div className="cash-strip five">
         <div className="cash-cell hero">
+          <span className="kpi-ic">
+            <KpiIcon name="banknote" />
+          </span>
           <div className="lab">Total Outstanding Receivables</div>
           <div className="val">{money(summary.outstanding)}</div>
           <div className="sub">
@@ -190,16 +193,25 @@ export function Invoices() {
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic n">
+            <KpiIcon name="calendar" />
+          </span>
           <div className="lab">Due Today</div>
           <div className="val">{money(summary.dueToday)}</div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic b">
+            <KpiIcon name="hourglass" />
+          </span>
           <div className="lab">Due Within 30 Days</div>
           <div className="val" style={{ color: "var(--brass)" }}>
             {money(summary.due30)}
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic r">
+            <KpiIcon name="alert" />
+          </span>
           <div className="lab">Overdue Invoices</div>
           <div className="val" style={{ color: "var(--red)" }}>
             {money(summary.overdue)}
@@ -209,6 +221,9 @@ export function Invoices() {
           </div>
         </div>
         <div className="cash-cell">
+          <span className="kpi-ic n">
+            <KpiIcon name="clock" />
+          </span>
           <div className="lab">Avg. Days to Get Paid</div>
           <div className="val">
             {summary.avgDaysToPay === null ? "—" : summary.avgDaysToPay.toFixed(1)}

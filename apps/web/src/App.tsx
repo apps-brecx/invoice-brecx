@@ -12,7 +12,6 @@ import { Customers } from "./pages/Customers/Customers";
 import { CustomerDetail } from "./pages/Customers/CustomerDetail";
 import { Items } from "./pages/Items/Items";
 import { ItemDetail } from "./pages/Items/ItemDetail";
-import { ItemForm } from "./pages/Items/ItemForm";
 import { Reports } from "./pages/Reports/Reports";
 import { ReportView } from "./pages/Reports/ReportView";
 import { Payments } from "./pages/Payments/Payments";
@@ -58,9 +57,10 @@ export default function App() {
         <Route path="/customers" element={<Customers />} />
         <Route path="/customers/:id" element={<CustomerDetail />} />
         <Route path="/items" element={<Items />} />
-        <Route path="/items/new" element={<ItemForm />} />
+        {/* New/Edit now happen in a modal (Zoho-style) — keep old deep links working. */}
+        <Route path="/items/new" element={<Navigate to="/items?new=1" replace />} />
         <Route path="/items/:id" element={<ItemDetail />} />
-        <Route path="/items/:id/edit" element={<ItemForm />} />
+        <Route path="/items/:id/edit" element={<ItemDetail />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/reports/:key" element={<ReportView />} />
         <Route path="/payments" element={<Payments />} />

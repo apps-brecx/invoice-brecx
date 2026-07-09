@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useBilling, money, type Item } from "../../lib/store";
 import { api } from "../../lib/api";
 import { Menu } from "../../components/Menu";
@@ -8,6 +8,8 @@ import { Select } from "../../components/Select";
 import { EmptyState, BoxIcon, SearchOffIcon } from "../../components/EmptyState";
 import { TableSkeleton } from "../../components/TableSkeleton";
 import { ConfirmModal } from "../../components/ConfirmModal";
+import { ImportItemsModal } from "../../components/ImportItemsModal";
+import { NewItemModal } from "../../components/ItemModal";
 import { useToast } from "../../components/Toast";
 import { downloadCsv } from "../Dashboard/Dashboard";
 
@@ -36,7 +38,20 @@ export function Items() {
   const [sortDesc, setSortDesc] = useState(false);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Sidebar quick-add lands on /items?new=1 — open the modal, then drop the
+  // param so refresh/back doesn't reopen it.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    if (params.get("new") === "1") {
+      setAdding(true);
+      setParams({}, { replace: true });
+    }
+  }, [params, setParams]);
 
   // Priceobo-style filters (orthogonal to the saved view).
   const [filterOpen, setFilterOpen] = useState(false);
@@ -83,7 +98,7 @@ export function Items() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(() => {
     const saved = Number(localStorage.getItem("items-page-size"));
-    return PAGE_SIZES.includes(saved) ? saved : PAGE_SIZES[0];
+    return PAGE_SIZES.includes(saved) ? saved : 25;
   });
   const changePageSize = (n: number) => {
     setPageSize(n);
@@ -163,7 +178,7 @@ export function Items() {
           )}
         </label>
         <div className="tb-right">
-          <button className="btn btn-primary" onClick={() => navigate("/items/new")}>
+          <button className="btn btn-primary" onClick={() => setAdding(true)}>
             + New
           </button>
           <Menu
@@ -185,7 +200,7 @@ export function Items() {
               { icon: "⤓", label: "Export (CSV)", onClick: exportCsv },
               { icon: "⟳", label: "Refresh List", onClick: () => void refresh() },
               { sep: true },
-              { icon: "⤒", label: "Import Items", disabled: true, title: "Coming later" },
+              { icon: "⤒", label: "Import Items", onClick: () => setImporting(true) },
               { icon: "⚙", label: "Preferences", disabled: true, title: "Settings module pending" },
             ]}
           />
@@ -281,7 +296,7 @@ export function Items() {
             title="No items yet"
             note="Add the products or services you sell — picking one prefills invoice lines with its description and rate."
             action={
-              <button className="btn btn-primary" onClick={() => navigate("/items/new")}>
+              <button className="btn btn-primary" onClick={() => setAdding(true)}>
                 + New Item
               </button>
             }
@@ -372,7 +387,7 @@ export function Items() {
                           title="Edit item"
                           onClick={(e) => {
                             e.stopPropagation();
-                            navigate(`/items/${it.id}/edit`);
+                            setEditingItem(it);
                           }}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -420,6 +435,37 @@ export function Items() {
           </div>
         )}
       </div>
+      )}
+
+      {adding && (
+        <NewItemModal
+          onClose={() => setAdding(false)}
+          onCreated={async () => {
+            setAdding(false);
+            await refresh();
+          }}
+        />
+      )}
+
+      {editingItem && (
+        <NewItemModal
+          initial={editingItem}
+          onClose={() => setEditingItem(null)}
+          onCreated={async () => {
+            setEditingItem(null);
+            await refresh();
+          }}
+        />
+      )}
+
+      {importing && (
+        <ImportItemsModal
+          onClose={() => setImporting(false)}
+          onImported={async (ok) => {
+            await refresh();
+            toast(`${ok} item${ok === 1 ? "" : "s"} imported`);
+          }}
+        />
       )}
 
       {confirmDelete && (

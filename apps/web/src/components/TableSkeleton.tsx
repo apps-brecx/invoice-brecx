@@ -1,3 +1,38 @@
+/** Shimmering placeholder for the split detail pages (mini-list left, record
+ *  right) — shown while the store loads on a hard refresh, instead of a
+ *  misleading "not found". */
+export function DetailSkeleton() {
+  return (
+    <section className="view detail-grid" aria-hidden="true">
+      <aside className="card inv-mini-list print-hide">
+        <div className="skel-mini-head">
+          <span className="skel-bar" style={{ width: "52%" }} />
+        </div>
+        {Array.from({ length: 11 }, (_, i) => (
+          <div className="skel-mini-row" key={i}>
+            <span className="skel-bar" style={{ width: `${42 + ((i * 13) % 34)}%` }} />
+            <span className="skel-bar" style={{ width: "17%" }} />
+          </div>
+        ))}
+      </aside>
+      <div className="skel-main">
+        <div className="skel-head">
+          <span className="skel-bar" style={{ width: 300, height: 20 }} />
+          <span className="skel-bar" style={{ width: 150 }} />
+        </div>
+        <div className="card" style={{ padding: "22px 26px" }}>
+          {Array.from({ length: 7 }, (_, i) => (
+            <div className="skel-kv" key={i}>
+              <span className="skel-bar" style={{ width: 120 }} />
+              <span className="skel-bar" style={{ width: `${26 + ((i * 17) % 38)}%` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** Shimmering placeholder rows shaped like the ledger table — shown while a
  *  list loads instead of a spinner. Bar widths vary per row so it reads as
  *  real content, not a repeated pattern. */

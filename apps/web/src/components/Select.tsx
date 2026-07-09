@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export interface SelectOption<T> {
   value: T;
@@ -6,8 +7,9 @@ export interface SelectOption<T> {
 }
 
 /** Custom dropdown select — replaces the browser-default <select> UI with the
- *  app's own menu styling. Closes on outside click / Escape; opens upward
- *  automatically when there's no room below (e.g. table footers). */
+ *  app's own menu styling. The option list renders into <body> via a portal,
+ *  so it never gets clipped by cards/scroll containers (their overflow:clip
+ *  would swallow it otherwise). Opens upward when there's no room below. */
 export function Select<T extends string | number>({
   value,
   options,
@@ -24,33 +26,42 @@ export function Select<T extends string | number>({
   const opts: Array<SelectOption<T>> = options.map((o) =>
     typeof o === "object" ? o : { value: o, label: String(o) },
   );
-  const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<DOMRect | null>(null);
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const open = box !== null;
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !popRef.current?.contains(t)) setBox(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") setBox(null);
     };
+    // The pop is fixed-positioned — close instead of drifting when scrolling.
+    const onScroll = () => setBox(null);
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open]);
 
   const toggle = () => {
-    if (!open && ref.current) {
-      // Not enough room below → drop up instead (footers sit near the fold).
-      const r = ref.current.getBoundingClientRect();
-      setUp(window.innerHeight - r.bottom < 40 * opts.length + 60);
+    if (open) {
+      setBox(null);
+      return;
     }
-    setOpen((o) => !o);
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    setUp(window.innerHeight - r.bottom < 40 * opts.length + 60);
+    setBox(r);
   };
 
   const current = opts.find((o) => o.value === value);
@@ -70,26 +81,41 @@ export function Select<T extends string | number>({
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
-      {open && (
-        <div className={"menu-pop ui-select-pop" + (up ? " up" : "")} role="listbox">
-          {opts.map((o) => (
-            <button
-              key={String(o.value)}
-              type="button"
-              role="option"
-              aria-selected={o.value === value}
-              className={"menu-item" + (o.value === value ? " active" : "")}
-              onClick={() => {
-                onChange(o.value);
-                setOpen(false);
-              }}
-            >
-              <span className="menu-lab">{o.label}</span>
-              {o.value === value && <span className="menu-check">✓</span>}
-            </button>
-          ))}
-        </div>
-      )}
+      {open &&
+        box &&
+        createPortal(
+          <div
+            ref={popRef}
+            className={"menu-pop ui-select-pop" + (up ? " up" : "")}
+            role="listbox"
+            style={{
+              position: "fixed",
+              left: box.left,
+              minWidth: box.width,
+              ...(up
+                ? { bottom: window.innerHeight - box.top + 6, top: "auto" }
+                : { top: box.bottom + 6 }),
+            }}
+          >
+            {opts.map((o) => (
+              <button
+                key={String(o.value)}
+                type="button"
+                role="option"
+                aria-selected={o.value === value}
+                className={"menu-item" + (o.value === value ? " active" : "")}
+                onClick={() => {
+                  onChange(o.value);
+                  setBox(null);
+                }}
+              >
+                <span className="menu-lab">{o.label}</span>
+                {o.value === value && <span className="menu-check">✓</span>}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

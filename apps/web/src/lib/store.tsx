@@ -32,6 +32,7 @@ export interface Customer {
   country: string | null;
   lifetime: number; // total actually paid, all time
   avgPayDays: number | null;
+  active: boolean;
   dotBg: string;
   dotFg: string;
 }
@@ -181,6 +182,7 @@ function mapClient(row: any, index: number): Customer {
     country: row.country ?? null,
     lifetime: num(row.lifetime_paid),
     avgPayDays: numOrNull(row.avg_pay_days),
+    active: row.active ?? true,
     dotBg,
     dotFg,
   };
@@ -350,6 +352,7 @@ export function customerOf(customers: Customer[], id: number): Customer {
       country: null,
       lifetime: 0,
       avgPayDays: null,
+      active: true,
       dotBg: "var(--line-soft)",
       dotFg: "var(--mut)",
     }

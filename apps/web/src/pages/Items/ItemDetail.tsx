@@ -3,7 +3,9 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useBilling, money, fmtShort, fmtDateTime } from "../../lib/store";
 import { api, apiUrl } from "../../lib/api";
 import { Menu } from "../../components/Menu";
+import { NewItemModal } from "../../components/ItemModal";
 import { Pagination } from "../../components/Pagination";
+import { DetailSkeleton } from "../../components/TableSkeleton";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { Stamp } from "../../components/bits";
 import { useToast } from "../../components/Toast";
@@ -30,11 +32,15 @@ export function ItemDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { items, refresh } = useBilling();
+  const { items, refresh, loading } = useBilling();
   const [tab, setTab] = useState<Tab>("overview");
   const [txns, setTxns] = useState<Txn[] | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Shared DB but per-environment files — the image may live on the other
+  // environment's disk (same tradeoff as Wholesale's attachments).
+  const [imgBroken, setImgBroken] = useState(false);
 
   const item = items.find((i) => String(i.id) === id);
 
@@ -66,6 +72,7 @@ export function ItemDetail() {
   useEffect(() => {
     setTab("overview");
     setTxns(null);
+    setImgBroken(false);
   }, [id]);
 
   useEffect(() => {
@@ -116,6 +123,9 @@ export function ItemDetail() {
       setSel(new Set());
       if (goHome) navigate("/items");
     }, `${plural(sel.size)} deleted`);
+
+  // On a hard refresh the store is still loading — skeleton, not "not found".
+  if (!item && loading) return <DetailSkeleton />;
 
   return (
     <section className="view detail-grid">
@@ -256,7 +266,7 @@ export function ItemDetail() {
                 <button
                   className="btn btn-ghost da-btn"
                   disabled={busy}
-                  onClick={() => navigate(`/items/${item.id}/edit`)}
+                  onClick={() => setEditOpen(true)}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
@@ -326,13 +336,31 @@ export function ItemDetail() {
 
             {tab === "overview" && (
               <div className="card" style={{ padding: "22px 26px" }}>
-                {item.imageKey && (
-                  <img
-                    className="detail-img"
-                    src={apiUrl(`/items/${item.id}/image?k=${item.imageKey}`)}
-                    alt={item.name}
-                  />
-                )}
+                {item.imageKey &&
+                  (imgBroken ? (
+                    <div className="detail-img img-unavailable">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2.5" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.8-3.8a2 2 0 0 0-2.8 0L6 19.5" />
+                        <path d="M3 3l18 18" />
+                      </svg>
+                      <b>No image available here</b>
+                      <small>
+                        This item's image was uploaded from{" "}
+                        {location.hostname === "localhost" ? "the live site" : "local dev"} — image
+                        files don't sync between environments. Re-upload it here if you need it in
+                        both.
+                      </small>
+                    </div>
+                  ) : (
+                    <img
+                      className="detail-img"
+                      src={apiUrl(`/items/${item.id}/image?k=${item.imageKey}`)}
+                      alt={item.name}
+                      onError={() => setImgBroken(true)}
+                    />
+                  ))}
                 <div className="ov-grid">
                   <div className="ov-row">
                     <span>Item Type</span>
@@ -453,6 +481,17 @@ export function ItemDetail() {
           </>
         )}
       </div>
+
+      {editOpen && item && (
+        <NewItemModal
+          initial={item}
+          onClose={() => setEditOpen(false)}
+          onCreated={async () => {
+            setEditOpen(false);
+            await refresh();
+          }}
+        />
+      )}
 
       {confirmBulk && (
         <ConfirmModal

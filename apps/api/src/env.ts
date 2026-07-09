@@ -31,6 +31,15 @@ export const env = {
   // at the mounted Persistent Disk (e.g. /data). Locally it defaults to
   // ./.storage (gitignored). Files live here, NOT in the database.
   STORAGE_DIR: opt("STORAGE_DIR"),
+
+  // Outbound email (customer statements etc.) over classic SMTP.
+  SMTP_HOST: opt("SMTP_HOST"),
+  SMTP_PORT: Number(opt("SMTP_PORT", "587")),
+  SMTP_SECURE: opt("SMTP_SECURE", "false") === "true",
+  SMTP_USER: opt("SMTP_USER"),
+  SMTP_PASS: opt("SMTP_PASS"),
+  // From-address; defaults to the SMTP login user.
+  SMTP_FROM: opt("SMTP_FROM") || opt("SMTP_USER"),
 };
 
 export const isProd = env.NODE_ENV === "production";

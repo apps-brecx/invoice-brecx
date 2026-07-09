@@ -70,6 +70,30 @@ export async function initSchema(): Promise<void> {
   await query(`CREATE INDEX IF NOT EXISTS clients_name_idx ON clients (LOWER(name));`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'Business';`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS payment_terms TEXT NOT NULL DEFAULT 'Due on Receipt';`);
+  // Zoho-style active/inactive — inactive customers stay on record but are
+  // visually muted; used by the customers list's bulk actions.
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;`);
+  // Who touched it — shown in the customer's Record Info (Zoho-style).
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS created_by TEXT;`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS updated_by TEXT;`);
+
+  // Customer documents (Zoho "Documents" on the contact form) — files live on
+  // disk (lib/storage.ts), rows only keep the pointer. Max 3 per customer,
+  // enforced in the route.
+  await query(`
+    CREATE TABLE IF NOT EXISTS client_documents (
+      id          BIGSERIAL PRIMARY KEY,
+      client_id   BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      filename    TEXT NOT NULL,
+      storage_key TEXT NOT NULL,
+      mime        TEXT NOT NULL,
+      size_bytes  BIGINT NOT NULL DEFAULT 0,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(
+    `CREATE INDEX IF NOT EXISTS client_documents_client_idx ON client_documents (client_id);`,
+  );
   // Zoho-parity customer profile: primary contact, phones, language,
   // portal flag, split billing/shipping addresses.
   for (const col of [

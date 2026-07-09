@@ -45,7 +45,7 @@ function buildNotifs(invoices: Invoice[]): Notif[] {
  *  (page eyebrow + title on the left, notification / help actions on the right). */
 export function AppLayout() {
   const { user, signOut } = useAuth();
-  const { customers, invoices } = useBilling();
+  const { invoices } = useBilling();
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -106,6 +106,34 @@ export function AppLayout() {
             <DashIcon />
             <span className="t">Dashboard</span>
           </NavLink>
+          <NavLink to="/customers">
+            <CustomersIcon />
+            <span className="t">Customers</span>
+            <Tooltip label="New customer">
+            <span
+              className="nav-add"
+              role="button"
+              tabIndex={0}
+              aria-label="New customer"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                navigate("/customers?new=1");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate("/customers?new=1");
+                }
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </span>
+            </Tooltip>
+          </NavLink>
           <NavLink to="/items">
             <ItemsIcon />
             <span className="t">Items</span>
@@ -118,13 +146,13 @@ export function AppLayout() {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                navigate("/items/new");
+                navigate("/items?new=1");
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   e.stopPropagation();
-                  navigate("/items/new");
+                  navigate("/items?new=1");
                 }
               }}
             >
@@ -142,11 +170,6 @@ export function AppLayout() {
           <NavLink to="/invoices/new">
             <PlusIcon />
             <span className="t">New invoice</span>
-          </NavLink>
-          <NavLink to="/customers">
-            <CustomersIcon />
-            <span className="t">Customers</span>
-            <span className="count">{customers.length}</span>
           </NavLink>
           <NavLink to="/reports">
             <ReportsIcon />

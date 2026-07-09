@@ -12,7 +12,7 @@ export function Pagination({
   pages: number;
   onPage: (page: number) => void;
 }) {
-  if (pages <= 1) return null;
+  if (pages < 1) return null;
 
   // Window of numbers around the current page; ellipsis where gaps exist.
   const nums: (number | "…")[] = [];

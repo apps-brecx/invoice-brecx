@@ -65,3 +65,57 @@ export function deleteItemImage(key: string | null | undefined): void {
     /* already gone */
   }
 }
+
+/* ---------------- Customer documents (Zoho "Documents") ---------------- */
+
+const DOC_DIR = path.join(ROOT, "client-docs");
+
+/** Allowed document types; the extension doubles as the stored content type. */
+export const DOC_MIMES: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "text/csv": "csv",
+  "text/plain": "txt",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+};
+
+const DOC_EXT_TO_MIME: Record<string, string> = Object.fromEntries(
+  Object.entries(DOC_MIMES).map(([m, e]) => [e, m]),
+);
+
+function resolveDocKey(key: string): string {
+  return path.join(DOC_DIR, path.basename(key));
+}
+
+/** Persist a document's bytes; returns the storage key to save in the DB. */
+export function saveClientDoc(buf: Buffer, mime: string): string {
+  fs.mkdirSync(DOC_DIR, { recursive: true });
+  const ext = DOC_MIMES[mime];
+  if (!ext) throw new Error(`Unsupported document type: ${mime}`);
+  const key = `${randomUUID()}.${ext}`;
+  fs.writeFileSync(path.join(DOC_DIR, key), buf);
+  return key;
+}
+
+/** Read a document's bytes back, with its content type. Throws if missing. */
+export function readClientDoc(key: string): { buf: Buffer; mime: string } {
+  const buf = fs.readFileSync(resolveDocKey(key));
+  const ext = key.split(".").pop() ?? "";
+  return { buf, mime: DOC_EXT_TO_MIME[ext] ?? "application/octet-stream" };
+}
+
+/** Best-effort delete (never throws). */
+export function deleteClientDoc(key: string | null | undefined): void {
+  if (!key) return;
+  try {
+    fs.unlinkSync(resolveDocKey(key));
+  } catch {
+    /* already gone */
+  }
+}

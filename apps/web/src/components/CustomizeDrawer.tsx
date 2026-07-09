@@ -9,10 +9,17 @@ import { useToast } from "./Toast";
  * cards; "PDF Template" flips to the Choose Template view listing every
  * saved template with live previews — clicking one makes it active. */
 
-export function CustomizeDrawer({ onClose }: { onClose: () => void }) {
+export function CustomizeDrawer({
+  onClose,
+  initialView = "home",
+}: {
+  onClose: () => void;
+  /** Open straight on a view (e.g. "templates" from the statement's Customize). */
+  initialView?: "home" | "templates";
+}) {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [view, setView] = useState<"home" | "templates">("home");
+  const [view, setView] = useState<"home" | "templates">(initialView);
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
   const [q, setQ] = useState("");
   const [savingId, setSavingId] = useState<number | null>(null);

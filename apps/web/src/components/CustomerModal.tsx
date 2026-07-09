@@ -1,13 +1,20 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { api } from "../lib/api";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { api, apiUrl } from "../lib/api";
+import { fileToBase64, fmtBytes, docMime, DOC_ACCEPT } from "../lib/files";
 import type { Customer } from "../lib/store";
 import { COUNTRIES, COUNTRY_NAMES } from "../lib/countries";
 import { usePaymentTerms } from "../lib/terms";
 import { SearchSelect, type SSOption } from "./SearchSelect";
+import { Select } from "./Select";
 import { useToast } from "./Toast";
 
 const SALUTATIONS = ["Mr.", "Mrs.", "Ms.", "Miss", "Dr."];
 const LANGUAGES = ["English", "Bengali", "Hindi", "Spanish", "French", "German", "Chinese", "Arabic"];
+
+const SALUTATION_OPTIONS = [
+  { value: "", label: "Salutation" },
+  ...SALUTATIONS.map((s) => ({ value: s, label: s })),
+];
 
 const DIAL_OPTIONS: SSOption[] = COUNTRIES.map((c) => ({
   value: c.dial,
@@ -77,11 +84,14 @@ export function AddCustomerModal({
   onClose,
   onAdded,
   initial,
+  initialTab,
 }: {
   onClose: () => void;
   onAdded: (c: Customer) => void | Promise<void>;
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   initial?: any;
+  /** Open on a specific tab (e.g. "address" from the overview's quick links). */
+  initialTab?: Tab;
 }) {
   const { toast } = useToast();
   const { terms: termOptions } = usePaymentTerms();
@@ -101,7 +111,7 @@ export function AddCustomerModal({
   const [mobileDial, setMobileDial] = useState(iMobDial);
   const [mobile, setMobile] = useState(iMobile);
   const [language, setLanguage] = useState(initial?.language ?? "English");
-  const [tab, setTab] = useState<Tab>("other");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "other");
   // Other details
   const [terms, setTerms] = useState(initial?.payment_terms ?? "Due on Receipt");
   const [portal, setPortal] = useState(Boolean(initial?.portal_enabled));
@@ -150,6 +160,54 @@ export function AddCustomerModal({
   // Remarks
   const [remarks, setRemarks] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
+
+  // Documents (Zoho-style): existing ones load in edit mode; new picks are
+  // queued locally and uploaded right after Save (create mode has no id yet).
+  interface ClientDoc {
+    id: number;
+    filename: string;
+    mime: string;
+    size_bytes: number;
+  }
+  const MAX_DOCS = 3;
+  const docRef = useRef<HTMLInputElement>(null);
+  const [docs, setDocs] = useState<ClientDoc[]>([]);
+  const [queuedDocs, setQueuedDocs] = useState<File[]>([]);
+  useEffect(() => {
+    if (!initial?.id) return;
+    api
+      .get<{ documents: ClientDoc[] }>(`/clients/${initial.id}/documents`)
+      .then((r) => setDocs(r.documents))
+      .catch(() => {});
+  }, [initial?.id]);
+
+  function pickDoc(file: File | undefined | null) {
+    if (!file) return;
+    if (docs.length + queuedDocs.length >= MAX_DOCS) {
+      toast(`A customer can have at most ${MAX_DOCS} documents`, "error");
+      return;
+    }
+    if (!docMime(file)) {
+      toast("Use a PDF, image, CSV, TXT or Office file", "error");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast("File is larger than 10 MB", "error");
+      return;
+    }
+    setQueuedDocs((cur) => [...cur, file]);
+    if (docRef.current) docRef.current.value = "";
+  }
+
+  async function deleteDoc(docId: number) {
+    if (!initial?.id) return;
+    try {
+      await api.del(`/clients/${initial.id}/documents/${docId}`);
+      setDocs((cur) => cur.filter((d) => d.id !== docId));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to delete document", "error");
+    }
+  }
 
   // Zoho-style display-name suggestions built from what's typed so far.
   const suggestions = useMemo(() => {
@@ -209,6 +267,15 @@ export function AddCustomerModal({
       const { client } = initial
         ? await api.put<{ client: any }>(`/clients/${initial.id}`, payload)
         : await api.post<{ client: any }>("/clients", payload);
+      // Queued documents upload once the customer exists.
+      for (const f of queuedDocs) {
+        const data = await fileToBase64(f);
+        await api.post(`/clients/${client.id}/documents`, {
+          filename: f.name,
+          mime: docMime(f),
+          data,
+        });
+      }
       await onAdded({
         id: client.id,
         name: client.name,
@@ -224,6 +291,7 @@ export function AddCustomerModal({
         country: client.country,
         lifetime: 0,
         avgPayDays: null,
+        active: client.active ?? true,
         dotBg: "var(--green-soft)",
         dotFg: "var(--green)",
       });
@@ -248,6 +316,7 @@ export function AddCustomerModal({
         </button>
         <h3>{initial ? "Edit Customer" : "New Customer"}</h3>
 
+        <div className="modal-body">
         <ZRow label="Customer type">
           <div className="radio-row">
             <label className="check">
@@ -273,16 +342,13 @@ export function AddCustomerModal({
 
         <ZRow label="Primary contact">
           <div className="z-inline">
-            <select
+            <Select
+              className="form-sel"
               value={salutation}
-              onChange={(e) => setSalutation(e.target.value)}
-              style={{ maxWidth: 110 }}
-            >
-              <option value="">Salutation</option>
-              {SALUTATIONS.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
+              options={SALUTATION_OPTIONS}
+              onChange={setSalutation}
+              ariaLabel="Salutation"
+            />
             <input
               placeholder="First name"
               value={firstName}
@@ -353,11 +419,13 @@ export function AddCustomerModal({
         </ZRow>
 
         <ZRow label="Customer language">
-          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            {LANGUAGES.map((l) => (
-              <option key={l}>{l}</option>
-            ))}
-          </select>
+          <Select
+            className="form-sel block"
+            value={language}
+            options={LANGUAGES}
+            onChange={setLanguage}
+            ariaLabel="Customer language"
+          />
         </ZRow>
 
         <div className="tabs">
@@ -395,6 +463,74 @@ export function AddCustomerModal({
                 <input type="checkbox" checked={portal} onChange={(e) => setPortal(e.target.checked)} />
                 Allow portal access for this customer
               </label>
+            </ZRow>
+            <ZRow label="Documents">
+              <div className="doc-up">
+                <button
+                  type="button"
+                  className="btn btn-ghost doc-btn"
+                  disabled={docs.length + queuedDocs.length >= MAX_DOCS}
+                  onClick={() => docRef.current?.click()}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <path d="M7 8l5-5 5 5M12 3v12" />
+                  </svg>
+                  Upload File
+                </button>
+                <small className="doc-hint">
+                  You can upload a maximum of {MAX_DOCS} files, 10 MB each
+                </small>
+                <input
+                  ref={docRef}
+                  type="file"
+                  accept={DOC_ACCEPT}
+                  style={{ display: "none" }}
+                  onChange={(e) => pickDoc(e.target.files?.[0])}
+                />
+                {(docs.length > 0 || queuedDocs.length > 0) && (
+                  <div className="doc-list">
+                    {docs.map((d) => (
+                      <div className="doc-row" key={d.id}>
+                        <DocIcon />
+                        <a
+                          className="doc-name"
+                          href={apiUrl(`/clients/${initial.id}/documents/${d.id}`)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open document"
+                        >
+                          {d.filename}
+                        </a>
+                        <span className="doc-size">{fmtBytes(Number(d.size_bytes))}</span>
+                        <button
+                          type="button"
+                          className="doc-x"
+                          title="Delete document"
+                          onClick={() => void deleteDoc(d.id)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    {queuedDocs.map((f, i) => (
+                      <div className="doc-row pending" key={`q${i}`}>
+                        <DocIcon />
+                        <span className="doc-name">{f.name}</span>
+                        <span className="doc-size">{fmtBytes(f.size)} · uploads on save</span>
+                        <button
+                          type="button"
+                          className="doc-x"
+                          title="Remove"
+                          onClick={() => setQueuedDocs((cur) => cur.filter((_, j) => j !== i))}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </ZRow>
 
             {!moreOpen ? (
@@ -449,61 +585,57 @@ export function AddCustomerModal({
         {tab === "contacts" && (
           <div className="tab-body">
             {contacts.length > 0 && (
-              <table className="cp-table">
-                <thead>
-                  <tr>
-                    <th>Salutation</th>
-                    <th>First Name</th>
-                    <th>Last Name</th>
-                    <th>Email Address</th>
-                    <th>Work Phone</th>
-                    <th>Mobile</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map((c, i) => (
-                    <tr key={i}>
-                      <td>
-                        <select
-                          value={c.salutation}
-                          onChange={(e) => setCp(i, { salutation: e.target.value })}
-                        >
-                          <option value=""></option>
-                          {SALUTATIONS.map((s) => (
-                            <option key={s}>{s}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>
-                        <input value={c.firstName} onChange={(e) => setCp(i, { firstName: e.target.value })} />
-                      </td>
-                      <td>
-                        <input value={c.lastName} onChange={(e) => setCp(i, { lastName: e.target.value })} />
-                      </td>
-                      <td>
-                        <input value={c.email} onChange={(e) => setCp(i, { email: e.target.value })} />
-                      </td>
-                      <td>
-                        <input value={c.workPhone} onChange={(e) => setCp(i, { workPhone: e.target.value })} />
-                      </td>
-                      <td>
-                        <input value={c.mobile} onChange={(e) => setCp(i, { mobile: e.target.value })} />
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          title="Remove contact person"
-                          onClick={() => setContacts((cur) => cur.filter((_, idx) => idx !== i))}
-                        >
-                          ×
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="cp-cards">
+                {contacts.map((c, i) => (
+                  <div className="cp-card" key={i}>
+                    <button
+                      type="button"
+                      className="icon-btn cp-remove"
+                      title="Remove contact person"
+                      onClick={() => setContacts((cur) => cur.filter((_, idx) => idx !== i))}
+                    >
+                      ✕
+                    </button>
+                    <div className="cp-row name-row">
+                      <Select
+                        className="form-sel"
+                        value={c.salutation}
+                        options={SALUTATION_OPTIONS}
+                        onChange={(v) => setCp(i, { salutation: v })}
+                        ariaLabel="Salutation"
+                      />
+                      <input
+                        placeholder="First name"
+                        value={c.firstName}
+                        onChange={(e) => setCp(i, { firstName: e.target.value })}
+                      />
+                      <input
+                        placeholder="Last name"
+                        value={c.lastName}
+                        onChange={(e) => setCp(i, { lastName: e.target.value })}
+                      />
+                    </div>
+                    <div className="cp-row">
+                      <input
+                        type="email"
+                        placeholder="Email address"
+                        value={c.email}
+                        onChange={(e) => setCp(i, { email: e.target.value })}
+                      />
+                      <input
+                        placeholder="Work phone"
+                        value={c.workPhone}
+                        onChange={(e) => setCp(i, { workPhone: e.target.value })}
+                      />
+                      <input
+                        placeholder="Mobile"
+                        value={c.mobile}
+                        onChange={(e) => setCp(i, { mobile: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
             <button
               type="button"
@@ -531,6 +663,7 @@ export function AddCustomerModal({
             </ZRow>
           </div>
         )}
+        </div>
 
         <div className="modal-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
@@ -542,6 +675,15 @@ export function AddCustomerModal({
         </div>
       </form>
     </div>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+      <path d="M14 2v5h5" />
+    </svg>
   );
 }
 

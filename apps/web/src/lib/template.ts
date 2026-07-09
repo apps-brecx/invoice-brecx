@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { templateSettingsSchema, type TemplateSettings } from "@inv/shared";
 import { api } from "./api";
 
@@ -63,14 +63,24 @@ export async function deleteTemplate(id: number): Promise<void> {
   await api.del(`/templates/${id}`);
 }
 
-/** Load the saved template once; callers render with defaults meanwhile. */
+/** Load the saved template once; callers render with defaults meanwhile.
+ *  `reload` re-fetches after e.g. switching the active template. */
 export function useTemplate(): {
   template: TemplateSettings;
   setTemplate: (t: TemplateSettings) => void;
   loaded: boolean;
+  reload: () => Promise<void>;
 } {
   const [template, setTemplate] = useState<TemplateSettings>(DEFAULT_TEMPLATE);
   const [loaded, setLoaded] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      setTemplate(await fetchTemplate());
+    } catch {
+      /* keep what we have */
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -89,5 +99,5 @@ export function useTemplate(): {
     };
   }, []);
 
-  return { template, setTemplate, loaded };
+  return { template, setTemplate, loaded, reload };
 }

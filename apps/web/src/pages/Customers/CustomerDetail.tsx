@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useBilling, money, fmtShort, fmtLong, initialsOf } from "../../lib/store";
+import { useBilling, money, fmtShort, fmtLong, fmtDateTime, initialsOf } from "../../lib/store";
 import { api } from "../../lib/api";
 import { useTemplate } from "../../lib/template";
+import { CustomizeDrawer } from "../../components/CustomizeDrawer";
+import { DateRangePicker } from "../../components/DateRangePicker";
+import { EmailStatementModal } from "../../components/EmailStatementModal";
 import { Menu } from "../../components/Menu";
+import { Tooltip } from "../../components/Tooltip";
+import { Pagination } from "../../components/Pagination";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { AddCustomerModal } from "../../components/CustomerModal";
+import { DetailSkeleton } from "../../components/TableSkeleton";
 import { Stamp, DueText } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 
@@ -20,12 +26,14 @@ interface Comment {
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+const MINI_PAGE = 15;
+
 export function CustomerDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { customers, invoices, payments, refresh } = useBilling();
-  const { template } = useTemplate();
+  const { customers, invoices, payments, refresh, loading } = useBilling();
+  const { template, reload: reloadTemplate } = useTemplate();
 
   const [tab, setTab] = useState<Tab>("overview");
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -33,8 +41,80 @@ export function CustomerDetail() {
   const [comments, setComments] = useState<Comment[] | null>(null);
   const [newComment, setNewComment] = useState("");
   const [editing, setEditing] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [customizing, setCustomizing] = useState<null | "home" | "templates">(null);
+  // Which tab the edit modal opens on — the overview's quick links ("New
+  // Address", contact-person ⊕) jump straight to the right section.
+  const [editTab, setEditTab] = useState<"other" | "address" | "contacts">("other");
+  const openEditAt = (t: "other" | "address" | "contacts") => {
+    setEditTab(t);
+    setEditing(true);
+  };
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Mini-list: search + paging + bulk selection (mirrors the full list view).
+  const [miniQ, setMiniQ] = useState("");
+  const [miniPage, setMiniPage] = useState(1);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const q = miniQ.trim().toLowerCase();
+  const miniRows = customers.filter(
+    (c) => !q || c.name.toLowerCase().includes(q) || (c.company ?? "").toLowerCase().includes(q),
+  );
+  const miniPages = Math.max(1, Math.ceil(miniRows.length / MINI_PAGE));
+  const safeMiniPage = Math.min(miniPage, miniPages);
+  const pageRows = miniRows.slice((safeMiniPage - 1) * MINI_PAGE, safeMiniPage * MINI_PAGE);
+  const allChecked = pageRows.length > 0 && pageRows.every((r) => sel.has(r.id));
+  const toggleAll = () => setSel(allChecked ? new Set() : new Set(pageRows.map((r) => r.id)));
+  const toggleOne = (rowId: number) =>
+    setSel((cur) => {
+      const next = new Set(cur);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  useEffect(() => {
+    setMiniPage(1);
+  }, [q]);
+
+  const plural = (n: number) => `${n} customer${n === 1 ? "" : "s"}`;
+  async function bulkActive(active: boolean) {
+    setBusy(true);
+    try {
+      for (const s of sel) await api.patch(`/clients/${s}/active`, { active });
+      await refresh();
+      toast(`${plural(sel.size)} marked as ${active ? "active" : "inactive"}`);
+      setSel(new Set());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Something went wrong", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function bulkDelete() {
+    setBusy(true);
+    const goHome = id ? sel.has(Number(id)) : false;
+    let ok = 0;
+    let failed = 0;
+    for (const s of sel) {
+      try {
+        await api.del(`/clients/${s}`);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    await refresh();
+    setSel(new Set());
+    setBusy(false);
+    if (failed > 0) {
+      toast(`${ok} deleted — ${failed} skipped (customers with invoices can't be deleted)`, "error");
+    } else {
+      toast(`${plural(ok)} deleted`);
+    }
+    if (goHome && ok > 0) navigate("/customers");
+  }
 
   const customer = customers.find((c) => String(c.id) === id);
   const custInvoices = useMemo(
@@ -128,6 +208,49 @@ export function CustomerDetail() {
     return months;
   }, [custInvoices]);
   const chartMax = Math.max(1, ...chart.map((m) => m.total));
+  // Round the axis top up to a "nice" number (1/2/5 × power of ten) so the
+  // Y ticks land on readable values.
+  const yMax = useMemo(() => {
+    const pow = Math.pow(10, Math.floor(Math.log10(chartMax)));
+    const n = chartMax / pow;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow;
+  }, [chartMax]);
+  const kFmt = (n: number) =>
+    n >= 1000 ? `${Number((n / 1000).toFixed(1))}K` : String(Math.round(n));
+
+  /* ------------- activity timeline: what happened, when, by whom --------- */
+  const timeline = useMemo(() => {
+    const ev: Array<{ ts: string; title: string; detail: string }> = [];
+    if (raw?.created_at) {
+      ev.push({
+        ts: String(raw.created_at),
+        title: "Customer created",
+        detail: `by ${raw.created_by ?? "Admin"}`,
+      });
+    }
+    if (raw?.updated_at && raw.updated_at !== raw.created_at) {
+      ev.push({
+        ts: String(raw.updated_at),
+        title: "Customer updated",
+        detail: `by ${raw.updated_by ?? "Admin"}`,
+      });
+    }
+    for (const inv of custInvoices) {
+      ev.push({
+        ts: `${inv.issued}T12:00:00`,
+        title: `Invoice ${inv.number} created`,
+        detail: `${money(inv.total)}${inv.status === "void" ? " · since voided" : ""}`,
+      });
+    }
+    for (const p of custPayments) {
+      ev.push({
+        ts: `${p.paidOn}T12:00:00`,
+        title: `Payment received for ${p.invoiceNumber}`,
+        detail: `${money(p.amount)}${p.mode ? ` · ${p.mode}` : ""}`,
+      });
+    }
+    return ev.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, 12);
+  }, [raw, custInvoices, custPayments]);
 
   /* ---------------- statement ---------------- */
   const now = new Date();
@@ -173,6 +296,105 @@ export function CustomerDetail() {
     };
   }, [custInvoices, custPayments, stmtFrom, stmtTo]);
 
+  /** Captures the on-screen statement paper pixel-for-pixel (same HTML the
+   *  print view uses) into a jsPDF doc — used by both the PDF download and
+   *  the email attachment. Libraries load lazily. */
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const stmtPdfName = () =>
+    `statement_${(customer?.name ?? "customer").replace(/[^a-zA-Z0-9]+/g, "_")}_${stmtFrom}_${stmtTo}.pdf`;
+
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  async function buildStatementPdf(): Promise<any> {
+    const el = document.querySelector<HTMLElement>(".stmt-paper");
+    if (!el) throw new Error("Open the Statement tab first");
+    const [{ domToCanvas }, { jsPDF }] = await Promise.all([
+      import("modern-screenshot"),
+      import("jspdf"),
+    ]);
+    const canvas = await domToCanvas(el, {
+      scale: 2, // crisp text
+      backgroundColor: "#ffffff",
+      // decorative chrome doesn't belong in the PDF
+      onCloneNode: (cloned) => {
+        const paper = cloned as HTMLElement;
+        paper.classList.add("pdf-capture");
+        paper.style.boxShadow = "none";
+        paper.style.borderRadius = "0";
+      },
+    });
+    // JPEG (q0.92) instead of PNG: ~5-10x smaller file → much faster SMTP
+    // upload when attached to email, no visible quality loss at 2x scale.
+    const img = canvas.toDataURL("image/jpeg", 0.92);
+
+    const pdf = new jsPDF({ unit: "pt", format: "a4" });
+    const W = pdf.internal.pageSize.getWidth();
+    const H = pdf.internal.pageSize.getHeight();
+    const margin = 26;
+    const imgW = W - margin * 2;
+    const imgH = canvas.height * (imgW / canvas.width);
+    const pageH = H - margin * 2;
+
+    // First page, then keep offsetting the same image for the overflow.
+    let heightLeft = imgH;
+    let position = margin;
+    pdf.addImage(img, "JPEG", margin, position, imgW, imgH);
+    heightLeft -= pageH;
+    while (heightLeft > 0) {
+      position -= pageH;
+      pdf.addPage();
+      pdf.addImage(img, "JPEG", margin, position, imgW, imgH);
+      heightLeft -= pageH;
+    }
+    return pdf;
+  }
+
+  /** Email attachment: the same exact PDF as base64. */
+  async function statementPdfAttachment(): Promise<{ filename: string; data: string }> {
+    const pdf = await buildStatementPdf();
+    const uri: string = pdf.output("datauristring");
+    return { filename: stmtPdfName(), data: uri.slice(uri.indexOf("base64,") + 7) };
+  }
+
+  async function exportPdf() {
+    if (!customer || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const pdf = await buildStatementPdf();
+      pdf.save(stmtPdfName());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not generate the PDF", "error");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
+  /** Excel opens an HTML table saved as .xls — no library needed. */
+  function exportXls() {
+    if (!customer) return;
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const num = (n: number) => n.toFixed(2);
+    const rows = statement.rows
+      .map(
+        (r) =>
+          `<tr><td>${esc(fmtLong(r.date))}</td><td>${esc(r.label)}${r.details ? ` (${esc(r.details)})` : ""}</td><td>${r.amount ? num(r.amount) : ""}</td><td>${r.payment ? num(r.payment) : ""}</td><td>${num(r.balance)}</td></tr>`,
+      )
+      .join("");
+    const html =
+      `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"/></head><body>` +
+      `<table><tr><th colspan="5">Statement of Accounts — ${esc(customer.name)} (${esc(fmtLong(stmtFrom))} to ${esc(fmtLong(stmtTo))})</th></tr>` +
+      `<tr><td>Opening Balance</td><td></td><td></td><td></td><td>${num(statement.opening)}</td></tr>` +
+      `<tr><th>Date</th><th>Transactions</th><th>Amount</th><th>Payments</th><th>Balance</th></tr>` +
+      rows +
+      `<tr><td colspan="4"><b>Balance Due</b></td><td><b>${num(statement.closing)}</b></td></tr></table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `statement_${customer.name.replace(/[^a-zA-Z0-9]+/g, "_")}_${stmtFrom}_${stmtTo}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   const billingAddr = raw
     ? [raw.address_line1, raw.address_line2, [raw.city, raw.billing_state, raw.postal_code].filter(Boolean).join(", "), raw.country].filter(Boolean)
     : [];
@@ -182,6 +404,9 @@ export function CustomerDetail() {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   const contactPersons: any[] = Array.isArray(raw?.contact_persons) ? raw.contact_persons : [];
 
+  // On a hard refresh the store is still loading — show the skeleton, not a
+  // misleading "not found".
+  if (!customer && loading) return <DetailSkeleton />;
   if (!customer) {
     return (
       <section className="view">
@@ -207,26 +432,113 @@ export function CustomerDetail() {
             All Customers
           </button>
         </div>
+        <div className="mini-tools">
+          <input
+            type="checkbox"
+            className="mini-check"
+            title="Select all on this page"
+            checked={allChecked}
+            onChange={toggleAll}
+          />
+          <label className="list-search mini-search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={miniQ}
+              onChange={(e) => setMiniQ(e.target.value)}
+              placeholder="Search customers…"
+            />
+            {miniQ && (
+              <button type="button" className="ls-clear" aria-label="Clear search" onClick={() => setMiniQ("")}>
+                ✕
+              </button>
+            )}
+          </label>
+        </div>
         <div className="mini-list-body">
-          {customers.map((row) => {
+          {pageRows.map((row) => {
             const open = invoices
               .filter((i) => i.customerId === row.id && i.status !== "draft" && i.status !== "void")
               .reduce((s, i) => s + i.balance, 0);
             return (
-              <button
+              <div
                 key={row.id}
+                role="button"
+                tabIndex={0}
                 className={"mini-inv" + (String(row.id) === id ? " on" : "")}
                 onClick={() => navigate(`/customers/${row.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") navigate(`/customers/${row.id}`);
+                }}
               >
-                <div className="mini-inv-top">
-                  <b>{row.name}</b>
-                  <span className="num">{money(open)}</span>
+                <input
+                  type="checkbox"
+                  className="mini-check"
+                  checked={sel.has(row.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => toggleOne(row.id)}
+                />
+                <div className="mini-inv-main">
+                  <div className="mini-inv-top">
+                    <b>{row.name}</b>
+                    <span className="num">{money(open)}</span>
+                  </div>
+                  {!row.active && (
+                    <div className="mini-inv-status">
+                      <span className="stamp void">Inactive</span>
+                    </div>
+                  )}
                 </div>
-              </button>
+              </div>
             );
           })}
+          {miniRows.length === 0 && (
+            <div className="empty-note">
+              <b>{customers.length === 0 ? "No customers yet" : "No matches"}</b>
+            </div>
+          )}
         </div>
+        {miniPages > 1 && (
+          <div className="mini-foot">
+            <Pagination page={safeMiniPage} pages={miniPages} onPage={setMiniPage} />
+          </div>
+        )}
       </aside>
+
+      {sel.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-count">
+            <strong>{sel.size}</strong> selected
+          </span>
+          <div className="bulk-actions">
+            <button className="bb-btn" disabled={busy} onClick={() => void bulkActive(true)}>
+              Mark as Active
+            </button>
+            <button className="bb-btn" disabled={busy} onClick={() => void bulkActive(false)}>
+              Mark as Inactive
+            </button>
+            <button
+              className="bb-btn danger bb-icon"
+              disabled={busy}
+              title="Delete selected"
+              aria-label="Delete selected"
+              onClick={() => setConfirmBulk(true)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6" />
+                <path d="M10 11v5M14 11v5" />
+              </svg>
+            </button>
+          </div>
+          <button className="bb-close" aria-label="Clear selection" onClick={() => setSel(new Set())}>
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* right: the customer */}
       <div className="inv-detail">
@@ -237,32 +549,71 @@ export function CustomerDetail() {
               {customer.type} · {customer.terms}
             </p>
           </div>
-          <div className="right" style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-            <button className="btn btn-ghost" disabled={busy || !raw} onClick={() => setEditing(true)}>
-              ✎ Edit
+          <div className="detail-actions">
+            <button
+              className="btn btn-ghost da-btn"
+              disabled={busy || !raw}
+              onClick={() => openEditAt("other")}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+              Edit
             </button>
             <Menu
               align="right"
               trigger={
-                <button className="btn btn-primary">
-                  New Transaction <i className="caret">▾</i>
+                <button className="btn btn-primary da-btn-primary">
+                  New Transaction
+                  <svg className="da-caret-light" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
                 </button>
               }
               items={[
-                { icon: "🧾", label: "New Invoice", onClick: () => navigate("/invoices/new") },
-                { icon: "◫", label: "New Quote", disabled: true, title: "Quotes module coming later" },
+                {
+                  icon: (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 2h9l4 4v16l-2.5-1.5L14 22l-2.5-1.5L9 22l-2.5-1.5L4 22V4a2 2 0 0 1 2-2z" />
+                      <path d="M9 8h7M9 12h7M9 16h4" />
+                    </svg>
+                  ),
+                  label: "New Invoice",
+                  onClick: () => navigate("/invoices/new"),
+                },
+                {
+                  icon: (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+                      <path d="M14 2v5h5M9 13h6M9 17h4" />
+                    </svg>
+                  ),
+                  label: "New Quote",
+                  disabled: true,
+                  title: "Quotes module coming later",
+                },
               ]}
             />
             <Menu
               align="right"
               trigger={
-                <button className="btn btn-ghost" disabled={busy}>
-                  More <i className="caret">▾</i>
+                <button className="btn btn-ghost da-btn" disabled={busy}>
+                  More
+                  <svg className="da-caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
                 </button>
               }
               items={[
                 {
-                  icon: "🗑",
+                  icon: (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                      <path d="M19 6l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6" />
+                      <path d="M10 11v5M14 11v5" />
+                    </svg>
+                  ),
                   label: "Delete",
                   danger: true,
                   title: "Customers with invoices can't be deleted",
@@ -270,9 +621,6 @@ export function CustomerDetail() {
                 },
               ]}
             />
-            <button className="icon-btn" title="Back to customers" onClick={() => navigate("/customers")}>
-              ✕
-            </button>
           </div>
         </div>
 
@@ -311,13 +659,41 @@ export function CustomerDetail() {
                 <div className="ov-row">
                   <span>Billing Address</span>
                   <b style={{ whiteSpace: "pre-line" }}>
-                    {billingAddr.length ? billingAddr.join("\n") : "No billing address"}
+                    {billingAddr.length ? (
+                      <>
+                        {billingAddr.join("\n")}
+                        <button type="button" className="ov-link" onClick={() => openEditAt("address")}>
+                          Edit
+                        </button>
+                      </>
+                    ) : (
+                      <span className="ov-empty">
+                        No billing address —{" "}
+                        <button type="button" className="ov-link" onClick={() => openEditAt("address")}>
+                          New Address
+                        </button>
+                      </span>
+                    )}
                   </b>
                 </div>
                 <div className="ov-row">
                   <span>Shipping Address</span>
                   <b style={{ whiteSpace: "pre-line" }}>
-                    {shippingAddr.length ? shippingAddr.join("\n") : "No shipping address"}
+                    {shippingAddr.length ? (
+                      <>
+                        {shippingAddr.join("\n")}
+                        <button type="button" className="ov-link" onClick={() => openEditAt("address")}>
+                          Edit
+                        </button>
+                      </>
+                    ) : (
+                      <span className="ov-empty">
+                        No shipping address —{" "}
+                        <button type="button" className="ov-link" onClick={() => openEditAt("address")}>
+                          New Address
+                        </button>
+                      </span>
+                    )}
                   </b>
                 </div>
               </div>
@@ -354,10 +730,26 @@ export function CustomerDetail() {
                 )}
               </div>
 
-              <h3 className="ov-h">Contact Persons</h3>
+              <h3 className="ov-h ov-h-action">
+                Contact Persons
+                <button
+                  type="button"
+                  className="cp-add"
+                  title="Add contact person"
+                  aria-label="Add contact person"
+                  onClick={() => openEditAt("contacts")}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
+              </h3>
               {contactPersons.length === 0 ? (
                 <p className="tab-note" style={{ padding: "2px 0 8px" }}>
-                  No contact persons found — add them from ✎ Edit.
+                  No contact persons found —{" "}
+                  <button type="button" className="ov-link" onClick={() => openEditAt("contacts")}>
+                    add one
+                  </button>
                 </p>
               ) : (
                 <div className="cd-cps">
@@ -381,6 +773,31 @@ export function CustomerDetail() {
                   </p>
                 </>
               )}
+
+              <h3 className="ov-h">Record Info</h3>
+              <div className="ov-grid">
+                <div className="ov-row">
+                  <span>Customer ID</span>
+                  <b className="num">CUST-{String(customer.id).padStart(6, "0")}</b>
+                </div>
+                <div className="ov-row">
+                  <span>Created On</span>
+                  <b>{fmtDateTime(raw?.created_at ?? null)}</b>
+                </div>
+                <div className="ov-row">
+                  <span>Created By</span>
+                  <b>{raw?.created_by ?? "Admin"}</b>
+                </div>
+                {raw?.updated_at && raw.updated_at !== raw.created_at && (
+                  <div className="ov-row">
+                    <span>Last Updated</span>
+                    <b>
+                      {fmtDateTime(raw.updated_at)}
+                      {raw.updated_by ? ` — ${raw.updated_by}` : ""}
+                    </b>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="cd-right">
@@ -418,30 +835,74 @@ export function CustomerDetail() {
               </div>
 
               <div className="card" style={{ padding: "18px 22px" }}>
-                <h3 className="ov-h" style={{ margin: "0 0 4px" }}>
+                <h3 className="ov-h" style={{ margin: "0 0 14px" }}>
                   Income <small style={{ color: "var(--mut-2)", fontWeight: 400 }}>(last 6 months)</small>
                 </h3>
-                <div className="cd-bars">
-                  {chart.map((m) => (
-                    <div className="cd-bar" key={m.label} title={`${m.label}: ${money(m.total)}`}>
-                      <div
-                        className="cd-bar-fill"
-                        style={{ height: `${Math.round((m.total / chartMax) * 100)}%` }}
-                      />
-                      <span>{m.label}</span>
+                <div className="cd-chart">
+                  <div className="cd-yaxis">
+                    {[4, 3, 2, 1, 0].map((i) => (
+                      <span key={i}>{kFmt((yMax / 4) * i)}</span>
+                    ))}
+                  </div>
+                  <div className="cd-plot">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className="cd-gridline" style={{ bottom: `${i * 25}%` }} />
+                    ))}
+                    <div className="cd-cols">
+                      {chart.map((m) => (
+                        <div className="cd-col" key={m.label}>
+                          <div
+                            className="cd-colbar"
+                            style={{ height: `${Math.max(1.5, (m.total / yMax) * 100)}%` }}
+                          >
+                            <span className="cd-tip">
+                              {m.label} · {money(m.total)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
                 </div>
-                <p className="tab-note" style={{ padding: "6px 0 0" }}>
+                <div className="cd-xaxis">
+                  <span className="cd-xpad" />
+                  <div className="cd-xlabels">
+                    {chart.map((m) => (
+                      <span key={m.label}>{m.label}</span>
+                    ))}
+                  </div>
+                </div>
+                <p className="tab-note" style={{ padding: "8px 0 0" }}>
                   Total income (last 6 months) —{" "}
                   <b>{money(chart.reduce((s, m) => s + m.total, 0))}</b>
                 </p>
               </div>
 
-              {raw?.created_at && (
-                <p className="tab-note" style={{ padding: "10px 4px 0" }}>
-                  Record created on <b>{fmtLong(String(raw.created_at).slice(0, 10))}</b>
-                </p>
+              {timeline.length > 0 && (
+                <div className="card" style={{ padding: "18px 22px", marginTop: 14 }}>
+                  <h3 className="ov-h" style={{ margin: "0 0 14px" }}>
+                    Activity Timeline
+                  </h3>
+                  <div className="cd-timeline">
+                    {timeline.map((e, i) => (
+                      <div className="tl-item" key={i}>
+                        <div className="tl-when">
+                          <b>{fmtLong(e.ts.slice(0, 10))}</b>
+                          {!e.ts.includes("T12:00:00") && (
+                            <span>{fmtDateTime(e.ts).split(" ").slice(3).join(" ")}</span>
+                          )}
+                        </div>
+                        <div className="tl-rail">
+                          <span className="tl-dot" />
+                        </div>
+                        <div className="tl-card">
+                          <b>{e.title}</b>
+                          <span>{e.detail}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -591,19 +1052,102 @@ export function CustomerDetail() {
           <>
             <div className="rv-filters print-hide" style={{ marginBottom: 16 }}>
               <span className="rv-lab">Period :</span>
-              <div className="field" style={{ margin: 0 }}>
-                <input type="date" value={stmtFrom} onChange={(e) => setStmtFrom(e.target.value)} />
-                <small>From</small>
+              <DateRangePicker
+                start={stmtFrom}
+                end={stmtTo}
+                onChange={(a, b) => {
+                  setStmtFrom(a);
+                  setStmtTo(b);
+                }}
+              />
+              <div className="stmt-actions">
+                <Tooltip label="Print" side="bottom">
+                  <button type="button" className="icon-btn stmt-ic" aria-label="Print" onClick={() => window.print()}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 9V2h12v7" />
+                      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                      <rect x="6" y="14" width="12" height="8" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                <Tooltip label={pdfBusy ? "Preparing PDF…" : "Download PDF"} side="bottom">
+                  <button type="button" className="icon-btn stmt-ic" aria-label="Download PDF" disabled={pdfBusy} onClick={() => void exportPdf()}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+                      <path d="M14 2v5h5" />
+                      <path d="M9 14h6M9 18h4" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                <Tooltip label="Export XLS" side="bottom">
+                  <button type="button" className="icon-btn stmt-ic" aria-label="Export XLS" onClick={exportXls}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                <button className="btn btn-primary" onClick={() => setEmailOpen(true)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="m22 7-10 6L2 7" />
+                  </svg>
+                  Send Email
+                </button>
               </div>
-              <div className="field" style={{ margin: 0 }}>
-                <input type="date" value={stmtTo} onChange={(e) => setStmtTo(e.target.value)} />
-                <small>To</small>
-              </div>
-              <button className="btn btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}>
-                ⎙ Print / PDF
-              </button>
             </div>
 
+            <div className="stmt-stage">
+              <div className="stmt-customize print-hide">
+                <Menu
+                  align="right"
+                  trigger={
+                    <button className="btn btn-primary da-btn-primary">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.5-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.4-2.6a7 7 0 0 0 2-1.2l2.5 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2z" />
+                      </svg>
+                      Customize
+                      <svg className="da-caret-light" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                  }
+                  items={[
+                    { heading: "Template" },
+                    {
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M16 3h5v5M8 21H3v-5" />
+                          <path d="M21 3l-7 7M3 21l7-7" />
+                        </svg>
+                      ),
+                      label: "Change Template",
+                      onClick: () => setCustomizing("templates"),
+                    },
+                    {
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                        </svg>
+                      ),
+                      label: "Edit Template",
+                      onClick: () => navigate("/settings/template"),
+                    },
+                    {
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2.5" />
+                          <circle cx="9" cy="9" r="2" />
+                          <path d="m21 15-3.8-3.8a2 2 0 0 0-2.8 0L6 19.5" />
+                        </svg>
+                      ),
+                      label: "Update Logo & Address",
+                      onClick: () => navigate("/settings/template"),
+                    },
+                  ]}
+                />
+              </div>
             <div className="paper stmt-paper">
               <div className="stmt-head">
                 <div>
@@ -697,19 +1241,61 @@ export function CustomerDetail() {
                 </tbody>
               </table>
             </div>
+            </div>
           </>
         )}
       </div>
 
+      {customizing && (
+        <CustomizeDrawer
+          initialView={customizing}
+          onClose={() => {
+            setCustomizing(null);
+            void reloadTemplate();
+          }}
+        />
+      )}
+
+      {emailOpen && customer && (
+        <EmailStatementModal
+          customer={customer}
+          periodFrom={stmtFrom}
+          periodTo={stmtTo}
+          statement={statement}
+          getAttachment={statementPdfAttachment}
+          attachmentName={stmtPdfName()}
+          onClose={() => setEmailOpen(false)}
+        />
+      )}
+
       {editing && raw && (
         <AddCustomerModal
           initial={raw}
+          initialTab={editTab}
           onClose={() => setEditing(false)}
           onAdded={async (c) => {
             setEditing(false);
             await Promise.all([refresh(), loadRaw()]);
             toast(`${c.name} saved`);
           }}
+        />
+      )}
+
+      {confirmBulk && (
+        <ConfirmModal
+          title={`Delete ${sel.size} customer${sel.size === 1 ? "" : "s"}?`}
+          message={
+            <>
+              Selected customer{sel.size === 1 ? "" : "s"} will be permanently deleted.
+              Customers with invoices are skipped — void or delete their invoices first.
+            </>
+          }
+          confirmLabel="Yes, delete"
+          onConfirm={() => {
+            setConfirmBulk(false);
+            void bulkDelete();
+          }}
+          onClose={() => setConfirmBulk(false)}
         />
       )}
 
