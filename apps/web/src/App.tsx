@@ -15,7 +15,8 @@ import { ItemDetail } from "./pages/Items/ItemDetail";
 import { Reports } from "./pages/Reports/Reports";
 import { ReportView } from "./pages/Reports/ReportView";
 import { Payments } from "./pages/Payments/Payments";
-import { SettingsAccount } from "./pages/SettingsAccount/SettingsAccount";
+import { Settings } from "./pages/Settings/Settings";
+import { AcceptInvite } from "./pages/AcceptInvite/AcceptInvite";
 import { ErrorPage } from "./pages/ErrorPage/ErrorPage";
 
 function Protected({ children }: { children: JSX.Element }) {
@@ -39,6 +40,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Public: the tokened link from the invite email lands here. */}
+      <Route path="/invite/:token" element={<AcceptInvite />} />
       <Route
         element={
           <Protected>
@@ -64,9 +67,11 @@ export default function App() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/reports/:key" element={<ReportView />} />
         <Route path="/payments" element={<Payments />} />
-        <Route path="/settings" element={<Navigate to="/settings/account" replace />} />
-        <Route path="/settings/account" element={<SettingsAccount />} />
+        <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
+        {/* Old bookmark — the account form now lives on the Users tab. */}
+        <Route path="/settings/account" element={<Navigate to="/settings/users" replace />} />
         <Route path="/settings/template" element={<SettingsTemplate />} />
+        <Route path="/settings/:tab" element={<Settings />} />
         <Route path="*" element={<ErrorPage message="Page not found" />} />
       </Route>
     </Routes>

@@ -11,6 +11,7 @@ import authPlugin from "./auth/plugin.js";
 
 import authRoutes from "./routes/auth.js";
 import meRoutes from "./routes/me.js";
+import usersRoutes from "./routes/users.js";
 import clientsRoutes from "./routes/clients.js";
 import invoicesRoutes from "./routes/invoices.js";
 import paymentsRoutes from "./routes/payments.js";
@@ -50,6 +51,7 @@ app.get("/", async () => ({ service: "invoice-brecx-api", status: "running" }));
 const api: FastifyPluginAsync = async (instance: FastifyInstance) => {
   await instance.register(authRoutes);
   await instance.register(meRoutes);
+  await instance.register(usersRoutes);
   await instance.register(clientsRoutes);
   await instance.register(invoicesRoutes);
   await instance.register(paymentsRoutes);

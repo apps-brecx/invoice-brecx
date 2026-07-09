@@ -1,6 +1,11 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { templateSettingsSchema, paymentTermInputSchema, PAYMENT_TERMS } from "@inv/shared";
 import { query } from "../db.js";
+import {
+  workspaceSettingsSchema,
+  readWorkspaceSettings,
+  writeWorkspaceSettings,
+} from "../lib/workspace.js";
 
 const TERMS_KEY = "custom_payment_terms";
 
@@ -32,6 +37,18 @@ function mergedTerms(custom: StoredTerm[]) {
 }
 
 const settingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Workspace-wide preferences (Settings → General). Anyone can read;
+  // only admins can change them.
+  app.get("/settings/workspace", { preHandler: app.requireAuth }, async () => {
+    return { workspace: await readWorkspaceSettings() };
+  });
+
+  app.put("/settings/workspace", { preHandler: app.requireAdmin }, async (req) => {
+    const workspace = workspaceSettingsSchema.parse(req.body ?? {});
+    await writeWorkspaceSettings(workspace);
+    return { workspace };
+  });
+
   // The ACTIVE invoice template's settings — what invoices + print use.
   // (Templates themselves live in invoice_templates; see routes/templates.ts.)
   app.get("/settings/template", { preHandler: app.requireAuth }, async () => {

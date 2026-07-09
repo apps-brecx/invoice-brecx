@@ -231,6 +231,40 @@ export async function initSchema(): Promise<void> {
   await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS created_by TEXT;`);
   await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_by TEXT;`);
 
+  // Tracked sign-ins — one row per device/browser session. The session
+  // cookie carries the sid; a row that's revoked or expired kills the
+  // cookie on the next request (Settings → Security → Active sessions).
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      sid          TEXT PRIMARY KEY,
+      user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_agent   TEXT,
+      ip           TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at   TIMESTAMPTZ NOT NULL,
+      revoked_at   TIMESTAMPTZ
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions (user_id);`);
+
+  // Team invitations (Settings → Users → Invite member). The invitee gets an
+  // email with a tokened link; accepting it creates their user account.
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_invitations (
+      id          BIGSERIAL PRIMARY KEY,
+      email       TEXT NOT NULL,
+      name        TEXT,
+      role        TEXT NOT NULL DEFAULT 'user',
+      token       TEXT UNIQUE NOT NULL,
+      invited_by  TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at  TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS user_invitations_email_idx ON user_invitations (LOWER(email));`);
+
   // Generic key/value app settings (runtime toggles, defaults).
   await query(`
     CREATE TABLE IF NOT EXISTS app_settings (

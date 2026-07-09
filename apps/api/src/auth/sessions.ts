@@ -7,6 +7,8 @@ export const MAX_AGE_DAYS = 30;
 interface SessionPayload extends SessionUser {
   iat: number;
   exp?: number;
+  /** Tracked-session id (user_sessions.sid). Absent on legacy cookies. */
+  sid?: string;
 }
 
 function getSecret(): string {

@@ -185,7 +185,15 @@ export function AppLayout() {
             <TemplateIcon />
             <span className="t">Template</span>
           </NavLink>
-          <NavLink to="/settings/account">
+          <NavLink
+            to="/settings/general"
+            className={({ isActive }) => {
+              // Any settings tab except the template editor lights this up.
+              const inSettings =
+                pathname.startsWith("/settings") && !pathname.startsWith("/settings/template");
+              return isActive || inSettings ? "active" : "";
+            }}
+          >
             <GearIcon />
             <span className="t">Settings</span>
           </NavLink>
