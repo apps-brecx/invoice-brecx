@@ -249,16 +249,20 @@ export function InvoiceDetail() {
               className={"mini-inv" + (String(row.dbId) === id ? " on" : "")}
               onClick={() => navigate(`/invoices/${row.dbId}`)}
             >
-              <div className="mini-inv-top">
-                <b>{row.customerName}</b>
-                <span className="num">{money(row.total)}</span>
-              </div>
-              <div className="mini-inv-sub">
-                <span className="inv-id">{row.number}</span>
-                <span>· {fmtShort(row.issued)}</span>
-              </div>
-              <div className="mini-inv-status">
-                <Stamp status={row.status} />
+              {/* .mini-inv is a flex ROW (checkbox + body on other pages) —
+                  everything must sit inside .mini-inv-main to stack. */}
+              <div className="mini-inv-main">
+                <div className="mini-inv-top">
+                  <b>{row.customerName}</b>
+                  <span className="num">{money(row.total)}</span>
+                </div>
+                <div className="mini-inv-sub">
+                  <span className="inv-id">{row.number}</span>
+                  <span>· {fmtShort(row.issued)}</span>
+                </div>
+                <div className="mini-inv-status">
+                  <Stamp status={row.status} />
+                </div>
               </div>
             </button>
           ))}

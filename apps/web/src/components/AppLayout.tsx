@@ -162,7 +162,16 @@ export function AppLayout() {
             </span>
             </Tooltip>
           </NavLink>
-          <NavLink to="/invoices" end>
+          <NavLink
+            to="/invoices"
+            className={() => {
+              // Detail/edit pages keep this lit; only "New invoice" (its own
+              // nav item below) opts out.
+              const on =
+                pathname.startsWith("/invoices") && !pathname.startsWith("/invoices/new");
+              return on ? "active" : "";
+            }}
+          >
             <InvoiceIcon />
             <span className="t">Invoices</span>
             {openCount > 0 && <span className="count hot">{openCount}</span>}
@@ -202,19 +211,20 @@ export function AppLayout() {
         <div className="side-foot">
           <div className="side-user">
             <div className="avatar">{initialsOf(user?.name || user?.email || "?")}</div>
-            <div>
+            <div className="su-meta">
               <b>{user?.name || user?.email}</b>
-              <span>{user?.role === "admin" ? "Owner" : "Member"} · Brecx</span>
+              <span>{user?.email}</span>
             </div>
-            <button
-              type="button"
-              className="side-signout"
-              title="Sign out"
-              aria-label="Sign out"
-              onClick={() => void signOut()}
-            >
-              <SignOutIcon />
-            </button>
+            <Tooltip label="Sign out">
+              <button
+                type="button"
+                className="side-signout"
+                aria-label="Sign out"
+                onClick={() => void signOut()}
+              >
+                <SignOutIcon />
+              </button>
+            </Tooltip>
           </div>
         </div>
       </aside>

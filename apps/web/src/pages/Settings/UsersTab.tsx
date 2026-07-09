@@ -16,6 +16,7 @@ import {
 } from "../../lib/team";
 import { Select } from "../../components/Select";
 import { ConfirmModal } from "../../components/ConfirmModal";
+import { Tooltip } from "../../components/Tooltip";
 import { useToast } from "../../components/Toast";
 
 const ROLE_OPTIONS = [
@@ -263,24 +264,28 @@ export function UsersTab() {
                         <td className="tm-joined">{fmtDateTime(u.created_at)}</td>
                         <td className="right">
                           <div className="tm-actions">
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              title="Edit member"
-                              onClick={() => setEditTarget(u)}
-                            >
-                              <PencilIcon />
-                            </button>
-                            {!isMe && (
+                            <Tooltip label="Edit member">
                               <button
                                 type="button"
-                                className="icon-btn tm-del"
-                                title="Remove from workspace"
-                                disabled={busyId === `u-${u.id}`}
-                                onClick={() => setDeleteTarget(u)}
+                                className="icon-btn"
+                                aria-label="Edit member"
+                                onClick={() => setEditTarget(u)}
                               >
-                                <TrashIcon />
+                                <PencilIcon />
                               </button>
+                            </Tooltip>
+                            {!isMe && (
+                              <Tooltip label="Remove from workspace">
+                                <button
+                                  type="button"
+                                  className="icon-btn tm-del"
+                                  aria-label="Remove from workspace"
+                                  disabled={busyId === `u-${u.id}`}
+                                  onClick={() => setDeleteTarget(u)}
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </Tooltip>
                             )}
                           </div>
                         </td>
@@ -336,15 +341,17 @@ export function UsersTab() {
                     >
                       Resend
                     </button>
-                    <button
-                      type="button"
-                      className="icon-btn tm-del"
-                      title="Cancel invitation"
-                      disabled={busyId === `i-${inv.id}`}
-                      onClick={() => void cancel(inv)}
-                    >
-                      <TrashIcon />
-                    </button>
+                    <Tooltip label="Cancel invitation">
+                      <button
+                        type="button"
+                        className="icon-btn tm-del"
+                        aria-label="Cancel invitation"
+                        disabled={busyId === `i-${inv.id}`}
+                        onClick={() => void cancel(inv)}
+                      >
+                        <TrashIcon />
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
               ))}
