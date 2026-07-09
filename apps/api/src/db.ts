@@ -99,9 +99,20 @@ export async function initSchema(): Promise<void> {
     "twitter TEXT",
     "skype TEXT",
     "facebook TEXT",
+    "contact_persons JSONB NOT NULL DEFAULT '[]'",
   ]) {
     await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS ${col};`);
   }
+
+  // Internal comments on a customer (Zoho "Comments" tab).
+  await query(`
+    CREATE TABLE IF NOT EXISTS client_comments (
+      id         BIGSERIAL PRIMARY KEY,
+      client_id  BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      body       TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 
   // Amounts are stored per item (quantity × unit_price); subtotal/tax/total
   // are snapshotted on the invoice at write time so historic invoices never
@@ -190,6 +201,11 @@ export async function initSchema(): Promise<void> {
   // Zoho-style active/inactive flag — inactive items stay on record but are
   // hidden from the invoice form's item picker.
   await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;`);
+  // Item image: the file lives on disk (lib/storage.ts); this is just its key.
+  await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS image_key TEXT;`);
+  // Who touched it — shown on the item's History tab (Zoho-style "created by").
+  await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS created_by TEXT;`);
+  await query(`ALTER TABLE items ADD COLUMN IF NOT EXISTS updated_by TEXT;`);
 
   // Generic key/value app settings (runtime toggles, defaults).
   await query(`

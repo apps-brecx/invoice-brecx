@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   useBilling,
   customerOf,
@@ -53,8 +53,8 @@ export function Invoices() {
   const { customers, invoices, summary, loading, refresh } = useBilling();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [params] = useSearchParams();
-  const q = (params.get("q") ?? "").toLowerCase();
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
   const [filter, setFilter] = useState<Filter>("all");
   const [viewsOpen, setViewsOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -141,6 +141,7 @@ export function Invoices() {
                   }}
                 >
                   <span className="menu-lab">{v.label}</span>
+                  {filter === v.key && <span className="menu-check">✓</span>}
                   <span className="menu-count">{counts.get(v.key) ?? 0}</span>
                 </button>
               ))}
@@ -215,23 +216,38 @@ export function Invoices() {
         </div>
       </div>
 
-      {q && (
-        <div className="filter-row">
-          <button className="chip on" onClick={() => navigate("/invoices")}>
-            Search: “{q}” ✕
-          </button>
-        </div>
-      )}
+      <div className="list-toolbar">
+        <label className="list-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search invoices by number, customer or order #…"
+          />
+          {search && (
+            <button type="button" className="ls-clear" aria-label="Clear search" onClick={() => setSearch("")}>
+              ✕
+            </button>
+          )}
+        </label>
+      </div>
 
       <div className="card">
         {sel.size > 0 && (
           <div className="bulk-bar">
-            <b>{sel.size} selected</b>
-            <button className="btn btn-ghost" onClick={() => exportCsv(sel)}>
-              Export CSV
-            </button>
-            <button className="btn btn-ghost" onClick={() => setSel(new Set())}>
-              Clear
+            <span className="bulk-count">
+              <strong>{sel.size}</strong> selected
+            </span>
+            <div className="bulk-actions">
+              <button className="bb-btn" onClick={() => exportCsv(sel)}>
+                Export CSV
+              </button>
+            </div>
+            <button className="bb-close" aria-label="Clear selection" onClick={() => setSel(new Set())}>
+              ✕
             </button>
           </div>
         )}

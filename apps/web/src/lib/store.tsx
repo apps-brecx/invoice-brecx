@@ -85,8 +85,13 @@ export interface Item {
   sellingPrice: number;
   description: string | null;
   active: boolean;
+  /** Storage key of the uploaded image (null = none). Bytes served at
+   *  /items/:id/image — append ?k=imageKey to bust caches on re-upload. */
+  imageKey: string | null;
   createdAt: string;
   updatedAt: string;
+  createdBy: string | null;
+  updatedBy: string | null;
 }
 
 export interface Summary {
@@ -116,6 +121,15 @@ export const fmtLong = (iso: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso.slice(0, 10) + "T00:00:00");
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+};
+/** Full timestamp — "09 Jul 2026 04:12 PM" (Zoho-style history rows). */
+export const fmtDateTime = (iso: string | null) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const date = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return `${date} ${time}`;
 };
 
 /** Days between an ISO date and today (positive = past). */
@@ -226,8 +240,11 @@ export function mapItem(row: any): Item {
     sellingPrice: num(row.selling_price),
     description: row.description ?? null,
     active: row.active ?? true,
+    imageKey: row.image_key ?? null,
     createdAt: row.created_at ?? "",
     updatedAt: row.updated_at ?? "",
+    createdBy: row.created_by ?? null,
+    updatedBy: row.updated_by ?? null,
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

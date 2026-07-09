@@ -26,6 +26,11 @@ export const env = {
   // Public URL of the web app (used in links inside emails, once added).
   // Defaults to the first CORS origin, which is the web app in dev and prod.
   WEB_URL: opt("WEB_URL") || opt("CORS_ORIGIN", "http://localhost:5173").split(",")[0].trim(),
+
+  // Root directory for uploaded files (item images). On Render, point this
+  // at the mounted Persistent Disk (e.g. /data). Locally it defaults to
+  // ./.storage (gitignored). Files live here, NOT in the database.
+  STORAGE_DIR: opt("STORAGE_DIR"),
 };
 
 export const isProd = env.NODE_ENV === "production";

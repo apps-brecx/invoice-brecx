@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { clientInputSchema, type ClientInput } from "@inv/shared";
+import { clientInputSchema, clientCommentSchema, type ClientInput } from "@inv/shared";
 import { query } from "../db.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -48,6 +48,7 @@ function clientColumns(body: ClientInput): { cols: string[]; values: unknown[] }
     facebook: body.facebook || null,
     tax_id: body.taxId || null,
     notes: body.notes || null,
+    contact_persons: JSON.stringify(body.contactPersons ?? []),
   };
   return { cols: Object.keys(map), values: Object.values(map) };
 }
@@ -119,6 +120,39 @@ const clientsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(409).send({ error: "Client has invoices — void or delete them first." });
     }
     await query(`DELETE FROM clients WHERE id = $1`, [id]);
+    return { ok: true };
+  });
+
+  // Internal comments (Zoho "Comments" tab on a customer).
+  app.get("/clients/:id/comments", { preHandler: app.requireAuth }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { rows } = await query(
+      `SELECT * FROM client_comments WHERE client_id = $1 ORDER BY created_at DESC`,
+      [id],
+    );
+    return { comments: rows };
+  });
+
+  app.post("/clients/:id/comments", { preHandler: app.requireAuth }, async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const { body } = clientCommentSchema.parse(req.body);
+    const exists = await query(`SELECT 1 FROM clients WHERE id = $1`, [id]);
+    if (!exists.rows[0]) return reply.code(404).send({ error: "Client not found." });
+    const { rows } = await query(
+      `INSERT INTO client_comments (client_id, body) VALUES ($1, $2) RETURNING *`,
+      [id, body],
+    );
+    return reply.code(201).send({ comment: rows[0] });
+  });
+
+  app.delete("/clients/:id/comments/:cid", { preHandler: app.requireAuth }, async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const { cid } = z.object({ cid: z.coerce.number().int().positive() }).parse(req.params);
+    const { rowCount } = await query(
+      `DELETE FROM client_comments WHERE id = $1 AND client_id = $2`,
+      [cid, id],
+    );
+    if (!rowCount) return reply.code(404).send({ error: "Comment not found." });
     return { ok: true };
   });
 };

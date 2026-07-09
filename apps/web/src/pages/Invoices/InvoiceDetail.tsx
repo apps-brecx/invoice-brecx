@@ -233,9 +233,13 @@ export function InvoiceDetail() {
       {/* left: compact invoice list, Zoho-style */}
       <aside className="card inv-mini-list print-hide">
         <div className="panel-head">
-          <h2>All Invoices</h2>
-          <button className="link" onClick={() => navigate("/invoices")}>
-            Full list →
+          <button className="back-nav" title="Back to all invoices" onClick={() => navigate("/invoices")}>
+            <span className="bn-ic">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </span>
+            All Invoices
           </button>
         </div>
         <div className="mini-list-body">

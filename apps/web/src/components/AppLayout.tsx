@@ -1,33 +1,91 @@
-import { useEffect, useRef } from "react";
-import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { useBilling, initialsOf } from "../lib/store";
+import { useBilling, initialsOf, money, type Invoice } from "../lib/store";
+import { Tooltip } from "./Tooltip";
 
-/** Ledger shell straight from the mockup: light sidebar with brass spine,
- *  topbar with breadcrumb + search + New invoice. */
+interface Notif {
+  id: string;
+  tone: "crit" | "warn" | "info";
+  title: string;
+  time: string;
+  dbId: number;
+}
+
+/** Notifications are derived live from real invoice data — anything still
+ *  owed becomes an activity entry, most-overdue first. No fake data. */
+function buildNotifs(invoices: Invoice[]): Notif[] {
+  return invoices
+    .filter((i) => i.balance > 0 && i.status !== "paid" && i.status !== "draft" && i.status !== "void")
+    .sort((a, b) => a.dueInDays - b.dueInDays)
+    .map((i) => {
+      const overdue = i.status === "overdue" || i.dueInDays < 0;
+      const soon = !overdue && i.dueInDays <= 7;
+      const d = Math.abs(i.dueInDays);
+      const amt = money(i.balance);
+      return {
+        id: `inv-${i.dbId}`,
+        tone: overdue ? "crit" : soon ? "warn" : "info",
+        title: overdue
+          ? `Invoice ${i.number} to ${i.customerName} is overdue`
+          : i.dueInDays === 0
+            ? `Invoice ${i.number} is due today`
+            : `Invoice ${i.number} awaiting payment`,
+        time: overdue
+          ? `${amt} · overdue by ${d} day${d === 1 ? "" : "s"}`
+          : i.dueInDays === 0
+            ? `${amt} · due today`
+            : `${amt} · due in ${i.dueInDays} day${i.dueInDays === 1 ? "" : "s"}`,
+        dbId: i.dbId,
+      };
+    });
+}
+
+/** Ledger shell: light sidebar with brass spine + a Priceobo-style topbar
+ *  (page eyebrow + title on the left, notification / help actions on the right). */
 export function AppLayout() {
   const { user, signOut } = useAuth();
   const { customers, invoices } = useBilling();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const searchRef = useRef<HTMLInputElement>(null);
 
   const openCount = invoices.filter(
     (i) => i.status !== "paid" && i.status !== "draft" && i.status !== "void" && i.balance > 0,
   ).length;
 
-  // ⌘K / Ctrl+K focuses the search box.
+  const notifs = useMemo(() => buildNotifs(invoices), [invoices]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const unread = notifs.filter((n) => !readIds.has(n.id));
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  // Paged list: 8 per page with Previous / Next controls.
+  const NOTIF_PAGE = 8;
+  const [notifPage, setNotifPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(notifs.length / NOTIF_PAGE));
+  const page = Math.min(notifPage, pageCount - 1);
+  const pageNotifs = notifs.slice(page * NOTIF_PAGE, (page + 1) * NOTIF_PAGE);
+
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (!notifOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!notifRef.current?.contains(e.target as Node)) setNotifOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setNotifOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [notifOpen]);
+
+  const markAllRead = () => setReadIds(new Set(notifs.map((n) => n.id)));
+  const openNotif = (n: Notif) => {
+    setReadIds((cur) => new Set(cur).add(n.id));
+    setNotifOpen(false);
+    navigate(`/invoices/${n.dbId}`);
+  };
 
   const crumb = pageName(pathname);
 
@@ -51,6 +109,30 @@ export function AppLayout() {
           <NavLink to="/items">
             <ItemsIcon />
             <span className="t">Items</span>
+            <Tooltip label="New item">
+            <span
+              className="nav-add"
+              role="button"
+              tabIndex={0}
+              aria-label="New item"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                navigate("/items/new");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate("/items/new");
+                }
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </span>
+            </Tooltip>
           </NavLink>
           <NavLink to="/invoices" end>
             <InvoiceIcon />
@@ -108,34 +190,123 @@ export function AppLayout() {
 
       <div className="main">
         <header className="topbar">
-          <div className="crumb">
-            <span>Fresh Finest / </span>
-            <span className="here">{crumb}</span>
+          <div className="tb-head">
+            <span className="tb-eyebrow">{sectionName(pathname)}</span>
+            <span className="tb-title">{crumb}</span>
           </div>
-          <label className="search">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" />
-            </svg>
-            <input
-              ref={searchRef}
-              placeholder="Search invoices, customers…"
-              defaultValue={params.get("q") ?? ""}
-              onChange={(e) => {
-                const q = e.target.value;
-                navigate(q ? `/invoices?q=${encodeURIComponent(q)}` : "/invoices", {
-                  replace: pathname === "/invoices",
-                });
-              }}
-            />
-            <span className="kbd">⌘K</span>
-          </label>
-          <button className="btn btn-primary" onClick={() => navigate("/invoices/new")}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            New invoice
-          </button>
+          <div className="tb-actions">
+            <div className="notif-wrap" ref={notifRef}>
+              <Tooltip
+                label={
+                  notifOpen
+                    ? ""
+                    : unread.length > 0
+                      ? `${unread.length} unread notification${unread.length === 1 ? "" : "s"}`
+                      : "Notifications"
+                }
+                side="bottom"
+              >
+                <button
+                  type="button"
+                  className="tb-icon"
+                  aria-label="Notifications"
+                  onClick={() =>
+                    setNotifOpen((o) => {
+                      if (!o) setNotifPage(0);
+                      return !o;
+                    })
+                  }
+                >
+                  <BellIcon />
+                  {unread.length > 0 && <span className="dot live" />}
+                </button>
+              </Tooltip>
+              {notifOpen && (
+                <div className="notif-panel">
+                  <div className="notif-head">
+                    <div>
+                      <h4>Notifications</h4>
+                      <div className="sub">
+                        {unread.length > 0 ? `${unread.length} unread` : "You're all caught up"}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="notif-mark"
+                      disabled={unread.length === 0}
+                      onClick={markAllRead}
+                    >
+                      Mark all read
+                    </button>
+                  </div>
+                  <div className="notif-list">
+                    {notifs.length === 0 ? (
+                      <div className="notif-empty">No notifications yet — invoices needing attention show up here.</div>
+                    ) : (
+                      pageNotifs.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          className={"notif-item " + (readIds.has(n.id) ? "read" : "unread")}
+                          onClick={() => openNotif(n)}
+                        >
+                          <span className={"notif-icon " + n.tone}>$</span>
+                          <span className="notif-body">
+                            <span className="notif-title">{n.title}</span>
+                            <span className="notif-time">{n.time}</span>
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {pageCount > 1 && (
+                    <div className="notif-pager">
+                      <button
+                        type="button"
+                        className="pg-btn"
+                        disabled={page === 0}
+                        onClick={() => setNotifPage(page - 1)}
+                      >
+                        ‹ Previous
+                      </button>
+                      <span className="pg-info">
+                        {page + 1} / {pageCount}
+                      </span>
+                      <button
+                        type="button"
+                        className="pg-btn"
+                        disabled={page >= pageCount - 1}
+                        onClick={() => setNotifPage(page + 1)}
+                      >
+                        Next ›
+                      </button>
+                    </div>
+                  )}
+                  <div className="notif-foot">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNotifOpen(false);
+                        navigate("/invoices");
+                      }}
+                    >
+                      View all notifications →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <Tooltip label="Help & reports" side="bottom">
+              <button
+                type="button"
+                className="tb-icon"
+                aria-label="Help"
+                onClick={() => navigate("/reports")}
+              >
+                <HelpIcon />
+              </button>
+            </Tooltip>
+          </div>
         </header>
 
         <main className="content">
@@ -144,6 +315,11 @@ export function AppLayout() {
       </div>
     </div>
   );
+}
+
+function sectionName(pathname: string): string {
+  if (/^\/(payments|settings)/.test(pathname)) return "Manage";
+  return "Workspace";
 }
 
 function pageName(pathname: string): string {
@@ -165,6 +341,24 @@ function TemplateIcon() {
       <rect x="4" y="2.5" width="16" height="19" rx="2" />
       <path d="M8 7h8M8 11h8M8 15h4" />
       <circle cx="16.5" cy="16.5" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
+}
+function HelpIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.2 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.8 2.5-2.8 2.5" />
+      <circle cx="12" cy="17" r=".6" fill="currentColor" stroke="none" />
     </svg>
   );
 }

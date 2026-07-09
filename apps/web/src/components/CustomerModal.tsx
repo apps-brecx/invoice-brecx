@@ -17,7 +17,34 @@ const DIAL_OPTIONS: SSOption[] = COUNTRIES.map((c) => ({
 
 const COUNTRY_OPTIONS: SSOption[] = COUNTRY_NAMES.map((n) => ({ value: n, label: n }));
 
-type Tab = "other" | "address" | "custom" | "remarks";
+type Tab = "other" | "address" | "contacts" | "custom" | "remarks";
+
+interface ContactPerson {
+  salutation: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  workPhone: string;
+  mobile: string;
+}
+const EMPTY_CP: ContactPerson = {
+  salutation: "",
+  firstName: "",
+  lastName: "",
+  email: "",
+  workPhone: "",
+  mobile: "",
+};
+
+/** Stored phones look like "+1 5551234" — split back into dial + number. */
+function splitDial(v: string | null | undefined): [string, string] {
+  const s = (v ?? "").trim();
+  if (s.startsWith("+")) {
+    const sp = s.indexOf(" ");
+    if (sp > 0) return [s.slice(0, sp), s.slice(sp + 1)];
+  }
+  return ["+1", s];
+}
 
 interface Address {
   attention: string;
@@ -43,45 +70,85 @@ const EMPTY_ADDR: Address = {
   fax: "",
 };
 
-/** Zoho-parity New Customer form — used from the Customers page and inline
- *  from the invoice form. Saves straight to the API. */
+/** Zoho-parity New/Edit Customer form — used from the Customers page and
+ *  inline from the invoice form. Saves straight to the API. Pass `initial`
+ *  (the raw client row) to edit instead of create. */
 export function AddCustomerModal({
   onClose,
   onAdded,
+  initial,
 }: {
   onClose: () => void;
   onAdded: (c: Customer) => void | Promise<void>;
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  initial?: any;
 }) {
   const { toast } = useToast();
   const { terms: termOptions } = usePaymentTerms();
-  const [type, setType] = useState<"Business" | "Individual">("Business");
-  const [salutation, setSalutation] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [company, setCompany] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
-  const [workDial, setWorkDial] = useState("+1");
-  const [workPhone, setWorkPhone] = useState("");
-  const [mobileDial, setMobileDial] = useState("+1");
-  const [mobile, setMobile] = useState("");
-  const [language, setLanguage] = useState("English");
+  const [iWorkDial, iWorkPhone] = splitDial(initial?.phone);
+  const [iMobDial, iMobile] = splitDial(initial?.mobile);
+  const [type, setType] = useState<"Business" | "Individual">(
+    initial?.type === "Individual" ? "Individual" : "Business",
+  );
+  const [salutation, setSalutation] = useState(initial?.salutation ?? "");
+  const [firstName, setFirstName] = useState(initial?.first_name ?? "");
+  const [lastName, setLastName] = useState(initial?.last_name ?? "");
+  const [company, setCompany] = useState(initial?.company ?? "");
+  const [displayName, setDisplayName] = useState(initial?.name ?? "");
+  const [email, setEmail] = useState(initial?.email ?? "");
+  const [workDial, setWorkDial] = useState(iWorkDial);
+  const [workPhone, setWorkPhone] = useState(iWorkPhone);
+  const [mobileDial, setMobileDial] = useState(iMobDial);
+  const [mobile, setMobile] = useState(iMobile);
+  const [language, setLanguage] = useState(initial?.language ?? "English");
   const [tab, setTab] = useState<Tab>("other");
   // Other details
-  const [terms, setTerms] = useState("Due on Receipt");
-  const [portal, setPortal] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [website, setWebsite] = useState("");
-  const [department, setDepartment] = useState("");
-  const [designation, setDesignation] = useState("");
-  const [twitter, setTwitter] = useState("");
-  const [skype, setSkype] = useState("");
-  const [facebook, setFacebook] = useState("");
+  const [terms, setTerms] = useState(initial?.payment_terms ?? "Due on Receipt");
+  const [portal, setPortal] = useState(Boolean(initial?.portal_enabled));
+  const [moreOpen, setMoreOpen] = useState(Boolean(initial?.website || initial?.department));
+  const [website, setWebsite] = useState(initial?.website ?? "");
+  const [department, setDepartment] = useState(initial?.department ?? "");
+  const [designation, setDesignation] = useState(initial?.designation ?? "");
+  const [twitter, setTwitter] = useState(initial?.twitter ?? "");
+  const [skype, setSkype] = useState(initial?.skype ?? "");
+  const [facebook, setFacebook] = useState(initial?.facebook ?? "");
   // Addresses
-  const [billing, setBilling] = useState<Address>(EMPTY_ADDR);
-  const [shipping, setShipping] = useState<Address>(EMPTY_ADDR);
+  const [billing, setBilling] = useState<Address>(
+    initial
+      ? {
+          attention: initial.billing_attention ?? "",
+          country: initial.country ?? "",
+          street1: initial.address_line1 ?? "",
+          street2: initial.address_line2 ?? "",
+          city: initial.city ?? "",
+          state: initial.billing_state ?? "",
+          zip: initial.postal_code ?? "",
+          phone: initial.billing_phone ?? "",
+          fax: initial.billing_fax ?? "",
+        }
+      : EMPTY_ADDR,
+  );
+  const [shipping, setShipping] = useState<Address>(
+    initial
+      ? {
+          attention: initial.shipping_attention ?? "",
+          country: initial.shipping_country ?? "",
+          street1: initial.shipping_street1 ?? "",
+          street2: initial.shipping_street2 ?? "",
+          city: initial.shipping_city ?? "",
+          state: initial.shipping_state ?? "",
+          zip: initial.shipping_zip ?? "",
+          phone: initial.shipping_phone ?? "",
+          fax: initial.shipping_fax ?? "",
+        }
+      : EMPTY_ADDR,
+  );
+  // Contact persons
+  const [contacts, setContacts] = useState<ContactPerson[]>(
+    Array.isArray(initial?.contact_persons) ? initial.contact_persons : [],
+  );
   // Remarks
-  const [remarks, setRemarks] = useState("");
+  const [remarks, setRemarks] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
 
   // Zoho-style display-name suggestions built from what's typed so far.
@@ -95,8 +162,7 @@ export function AddCustomerModal({
     e.preventDefault();
     setSaving(true);
     try {
-      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-      const { client } = await api.post<{ client: any }>("/clients", {
+      const payload = {
         name: displayName.trim(),
         type,
         salutation: salutation || null,
@@ -135,7 +201,14 @@ export function AddCustomerModal({
         shippingPhone: shipping.phone.trim() || null,
         shippingFax: shipping.fax.trim() || null,
         notes: remarks.trim() || null,
-      });
+        contactPersons: contacts.filter(
+          (c) => c.firstName || c.lastName || c.email || c.workPhone || c.mobile,
+        ),
+      };
+      /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+      const { client } = initial
+        ? await api.put<{ client: any }>(`/clients/${initial.id}`, payload)
+        : await api.post<{ client: any }>("/clients", payload);
       await onAdded({
         id: client.id,
         name: client.name,
@@ -155,10 +228,13 @@ export function AddCustomerModal({
         dotFg: "var(--green)",
       });
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to add customer", "error");
+      toast(err instanceof Error ? err.message : "Failed to save customer", "error");
       setSaving(false);
     }
   }
+
+  const setCp = (i: number, patch: Partial<ContactPerson>) =>
+    setContacts((cur) => cur.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -170,7 +246,7 @@ export function AddCustomerModal({
         <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>
           ✕
         </button>
-        <h3>New Customer</h3>
+        <h3>{initial ? "Edit Customer" : "New Customer"}</h3>
 
         <ZRow label="Customer type">
           <div className="radio-row">
@@ -289,6 +365,7 @@ export function AddCustomerModal({
             [
               ["other", "Other Details"],
               ["address", "Address"],
+              ["contacts", "Contact Persons"],
               ["custom", "Custom Fields"],
               ["remarks", "Remarks"],
             ] as Array<[Tab, string]>
@@ -366,6 +443,75 @@ export function AddCustomerModal({
                 </button>
               }
             />
+          </div>
+        )}
+
+        {tab === "contacts" && (
+          <div className="tab-body">
+            {contacts.length > 0 && (
+              <table className="cp-table">
+                <thead>
+                  <tr>
+                    <th>Salutation</th>
+                    <th>First Name</th>
+                    <th>Last Name</th>
+                    <th>Email Address</th>
+                    <th>Work Phone</th>
+                    <th>Mobile</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contacts.map((c, i) => (
+                    <tr key={i}>
+                      <td>
+                        <select
+                          value={c.salutation}
+                          onChange={(e) => setCp(i, { salutation: e.target.value })}
+                        >
+                          <option value=""></option>
+                          {SALUTATIONS.map((s) => (
+                            <option key={s}>{s}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input value={c.firstName} onChange={(e) => setCp(i, { firstName: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={c.lastName} onChange={(e) => setCp(i, { lastName: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={c.email} onChange={(e) => setCp(i, { email: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={c.workPhone} onChange={(e) => setCp(i, { workPhone: e.target.value })} />
+                      </td>
+                      <td>
+                        <input value={c.mobile} onChange={(e) => setCp(i, { mobile: e.target.value })} />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Remove contact person"
+                          onClick={() => setContacts((cur) => cur.filter((_, idx) => idx !== i))}
+                        >
+                          ×
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <button
+              type="button"
+              className="add-line"
+              onClick={() => setContacts((cur) => (cur.length < 10 ? [...cur, { ...EMPTY_CP }] : cur))}
+            >
+              + Add Contact Person
+            </button>
           </div>
         )}
 

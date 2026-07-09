@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useBilling, money, fmtShort, fmtLong } from "../../lib/store";
-import { api } from "../../lib/api";
+import { useBilling, money, fmtShort, fmtDateTime } from "../../lib/store";
+import { api, apiUrl } from "../../lib/api";
 import { Menu } from "../../components/Menu";
+import { Pagination } from "../../components/Pagination";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { Stamp } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 import type { DisplayStatus } from "../../lib/store";
+
+const MINI_PAGE = 15;
 
 interface Txn {
   id: number;
@@ -34,6 +37,31 @@ export function ItemDetail() {
   const [busy, setBusy] = useState(false);
 
   const item = items.find((i) => String(i.id) === id);
+
+  // Mini-list: search + paging + bulk selection (mirrors the full list view).
+  const [miniQ, setMiniQ] = useState("");
+  const [miniPage, setMiniPage] = useState(1);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const q = miniQ.trim().toLowerCase();
+  const miniRows = items.filter((i) => !q || i.name.toLowerCase().includes(q));
+  const miniPages = Math.max(1, Math.ceil(miniRows.length / MINI_PAGE));
+  const safeMiniPage = Math.min(miniPage, miniPages);
+  const pageItems = miniRows.slice((safeMiniPage - 1) * MINI_PAGE, safeMiniPage * MINI_PAGE);
+  const allChecked = pageItems.length > 0 && pageItems.every((r) => sel.has(r.id));
+  const toggleAll = () =>
+    setSel(allChecked ? new Set() : new Set(pageItems.map((r) => r.id)));
+  const toggleOne = (rowId: number) =>
+    setSel((cur) => {
+      const next = new Set(cur);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+
+  useEffect(() => {
+    setMiniPage(1);
+  }, [q]);
 
   useEffect(() => {
     setTab("overview");
@@ -74,41 +102,137 @@ export function ItemDetail() {
       navigate("/items");
     }, "Item deleted");
 
+  // Bulk actions over the mini-list selection (same behavior as the list view).
+  const plural = (n: number) => `${n} item${n === 1 ? "" : "s"}`;
+  const bulkActive = (active: boolean) =>
+    act(async () => {
+      for (const s of sel) await api.patch(`/items/${s}/active`, { active });
+      setSel(new Set());
+    }, `${plural(sel.size)} marked as ${active ? "active" : "inactive"}`);
+  const bulkDelete = () =>
+    act(async () => {
+      const goHome = id ? sel.has(Number(id)) : false;
+      for (const s of sel) await api.del(`/items/${s}`);
+      setSel(new Set());
+      if (goHome) navigate("/items");
+    }, `${plural(sel.size)} deleted`);
+
   return (
     <section className="view detail-grid">
       {/* left: compact items list, Zoho-style */}
       <aside className="card inv-mini-list print-hide">
         <div className="panel-head">
-          <h2>All Items</h2>
-          <button className="link" onClick={() => navigate("/items")}>
-            Full list →
+          <button className="back-nav" title="Back to all items" onClick={() => navigate("/items")}>
+            <span className="bn-ic">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </span>
+            All Items
           </button>
         </div>
+        <div className="mini-tools">
+          <input
+            type="checkbox"
+            className="mini-check"
+            title="Select all on this page"
+            checked={allChecked}
+            onChange={toggleAll}
+          />
+          <label className="list-search mini-search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={miniQ}
+              onChange={(e) => setMiniQ(e.target.value)}
+              placeholder="Search items…"
+            />
+            {miniQ && (
+              <button type="button" className="ls-clear" aria-label="Clear search" onClick={() => setMiniQ("")}>
+                ✕
+              </button>
+            )}
+          </label>
+        </div>
         <div className="mini-list-body">
-          {items.map((row) => (
-            <button
+          {pageItems.map((row) => (
+            <div
               key={row.id}
+              role="button"
+              tabIndex={0}
               className={"mini-inv" + (String(row.id) === id ? " on" : "")}
               onClick={() => navigate(`/items/${row.id}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") navigate(`/items/${row.id}`);
+              }}
             >
-              <div className="mini-inv-top">
-                <b>{row.name}</b>
-                <span className="num">{money(row.sellingPrice)}</span>
-              </div>
-              {!row.active && (
-                <div className="mini-inv-status">
-                  <span className="stamp void">Inactive</span>
+              <input
+                type="checkbox"
+                className="mini-check"
+                checked={sel.has(row.id)}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => toggleOne(row.id)}
+              />
+              <div className="mini-inv-main">
+                <div className="mini-inv-top">
+                  <b>{row.name}</b>
+                  <span className="num">{money(row.sellingPrice)}</span>
                 </div>
-              )}
-            </button>
+                {!row.active && (
+                  <div className="mini-inv-status">
+                    <span className="stamp void">Inactive</span>
+                  </div>
+                )}
+              </div>
+            </div>
           ))}
-          {items.length === 0 && (
+          {miniRows.length === 0 && (
             <div className="empty-note">
-              <b>No items yet</b>
+              <b>{items.length === 0 ? "No items yet" : "No matches"}</b>
             </div>
           )}
         </div>
+        {miniPages > 1 && (
+          <div className="mini-foot">
+            <Pagination page={safeMiniPage} pages={miniPages} onPage={setMiniPage} />
+          </div>
+        )}
       </aside>
+
+      {sel.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-count">
+            <strong>{sel.size}</strong> selected
+          </span>
+          <div className="bulk-actions">
+            <button className="bb-btn" disabled={busy} onClick={() => void bulkActive(true)}>
+              Mark as Active
+            </button>
+            <button className="bb-btn" disabled={busy} onClick={() => void bulkActive(false)}>
+              Mark as Inactive
+            </button>
+            <button
+              className="bb-btn danger bb-icon"
+              disabled={busy}
+              title="Delete selected"
+              aria-label="Delete selected"
+              onClick={() => setConfirmBulk(true)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6" />
+                <path d="M10 11v5M14 11v5" />
+              </svg>
+            </button>
+          </div>
+          <button className="bb-close" aria-label="Clear selection" onClick={() => setSel(new Set())}>
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* right: the item */}
       <div className="inv-detail">
@@ -128,37 +252,63 @@ export function ItemDetail() {
                   {!item.active && <span className="stamp void">Inactive</span>}
                 </p>
               </div>
-              <div className="right" style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+              <div className="detail-actions">
                 <button
-                  className="icon-btn"
-                  title="Edit item"
+                  className="btn btn-ghost da-btn"
                   disabled={busy}
                   onClick={() => navigate(`/items/${item.id}/edit`)}
                 >
-                  ✎
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  </svg>
+                  Edit
                 </button>
                 <Menu
                   align="right"
                   trigger={
-                    <button className="btn btn-ghost" disabled={busy}>
-                      More <i className="caret">▾</i>
+                    <button className="btn btn-ghost da-btn" disabled={busy}>
+                      More
+                      <svg className="da-caret" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
                     </button>
                   }
                   items={[
                     item.active
-                      ? { icon: "⊘", label: "Mark as Inactive", onClick: () => void setActive(false) }
-                      : { icon: "✓", label: "Mark as Active", onClick: () => void setActive(true) },
+                      ? {
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="9" />
+                              <path d="M5.6 5.6l12.8 12.8" />
+                            </svg>
+                          ),
+                          label: "Mark as Inactive",
+                          onClick: () => void setActive(false),
+                        }
+                      : {
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 6 9 17l-5-5" />
+                            </svg>
+                          ),
+                          label: "Mark as Active",
+                          onClick: () => void setActive(true),
+                        },
                     {
-                      icon: "🗑",
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18" />
+                          <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                          <path d="M19 6l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6" />
+                          <path d="M10 11v5M14 11v5" />
+                        </svg>
+                      ),
                       label: "Delete",
                       danger: true,
                       onClick: () => setConfirmDelete(true),
                     },
                   ]}
                 />
-                <button className="icon-btn" title="Back to items" onClick={() => navigate("/items")}>
-                  ✕
-                </button>
               </div>
             </div>
 
@@ -176,6 +326,13 @@ export function ItemDetail() {
 
             {tab === "overview" && (
               <div className="card" style={{ padding: "22px 26px" }}>
+                {item.imageKey && (
+                  <img
+                    className="detail-img"
+                    src={apiUrl(`/items/${item.id}/image?k=${item.imageKey}`)}
+                    alt={item.name}
+                  />
+                )}
                 <div className="ov-grid">
                   <div className="ov-row">
                     <span>Item Type</span>
@@ -276,15 +433,17 @@ export function ItemDetail() {
                     <tbody>
                       {item.updatedAt && item.updatedAt !== item.createdAt && (
                         <tr>
-                          <td className="num">{fmtLong(String(item.updatedAt).slice(0, 10))}</td>
-                          <td>last updated</td>
+                          <td className="num">{fmtDateTime(item.updatedAt)}</td>
+                          <td>
+                            updated by <b className="hist-by">— {item.updatedBy ?? "Admin"}</b>
+                          </td>
                         </tr>
                       )}
                       <tr>
-                        <td className="num">
-                          {item.createdAt ? fmtLong(String(item.createdAt).slice(0, 10)) : "—"}
+                        <td className="num">{fmtDateTime(item.createdAt)}</td>
+                        <td>
+                          created by <b className="hist-by">— {item.createdBy ?? "Admin"}</b>
                         </td>
-                        <td>created</td>
                       </tr>
                     </tbody>
                   </table>
@@ -294,6 +453,24 @@ export function ItemDetail() {
           </>
         )}
       </div>
+
+      {confirmBulk && (
+        <ConfirmModal
+          title={`Delete ${sel.size} item${sel.size === 1 ? "" : "s"}?`}
+          message={
+            <>
+              The selected item{sel.size === 1 ? "" : "s"} will be permanently deleted. Invoices
+              already created are not affected — lines keep their text.
+            </>
+          }
+          confirmLabel="Yes, delete"
+          onConfirm={() => {
+            setConfirmBulk(false);
+            void bulkDelete();
+          }}
+          onClose={() => setConfirmBulk(false)}
+        />
+      )}
 
       {confirmDelete && item && (
         <ConfirmModal

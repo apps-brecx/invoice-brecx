@@ -95,8 +95,28 @@ export const clientInputSchema = z.object({
   shippingFax: optStr(60),
   taxId: optStr(60),
   notes: z.string().trim().max(2000).optional().nullable(),
+  /** Zoho-style contact persons (stored as JSONB on the client row). */
+  contactPersons: z
+    .array(
+      z.object({
+        salutation: z.string().trim().max(20).default(""),
+        firstName: z.string().trim().max(100).default(""),
+        lastName: z.string().trim().max(100).default(""),
+        email: z.string().trim().max(200).default(""),
+        workPhone: z.string().trim().max(60).default(""),
+        mobile: z.string().trim().max(60).default(""),
+      }),
+    )
+    .max(10)
+    .default([]),
 });
 export type ClientInput = z.infer<typeof clientInputSchema>;
+export type ContactPerson = ClientInput["contactPersons"][number];
+
+/** A comment on a customer (internal, Zoho "Comments" tab). */
+export const clientCommentSchema = z.object({
+  body: z.string().trim().min(1).max(2000),
+});
 
 /* ----------------------------- Invoices ----------------------------- */
 

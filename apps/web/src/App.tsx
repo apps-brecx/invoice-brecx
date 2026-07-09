@@ -9,6 +9,7 @@ import { InvoiceDetail } from "./pages/Invoices/InvoiceDetail";
 import { CreateInvoice } from "./pages/CreateInvoice/CreateInvoice";
 import { SettingsTemplate } from "./pages/SettingsTemplate/SettingsTemplate";
 import { Customers } from "./pages/Customers/Customers";
+import { CustomerDetail } from "./pages/Customers/CustomerDetail";
 import { Items } from "./pages/Items/Items";
 import { ItemDetail } from "./pages/Items/ItemDetail";
 import { ItemForm } from "./pages/Items/ItemForm";
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/invoices/:id" element={<InvoiceDetail />} />
         <Route path="/invoices/:id/edit" element={<CreateInvoice />} />
         <Route path="/customers" element={<Customers />} />
+        <Route path="/customers/:id" element={<CustomerDetail />} />
         <Route path="/items" element={<Items />} />
         <Route path="/items/new" element={<ItemForm />} />
         <Route path="/items/:id" element={<ItemDetail />} />
