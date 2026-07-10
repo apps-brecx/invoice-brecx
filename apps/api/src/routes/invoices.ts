@@ -172,12 +172,14 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       await db.query("COMMIT");
       const { rows } = await query(`SELECT * FROM (${ENRICHED}) t WHERE t.id = $1`, [invoiceId]);
+      // The Claude AI assistant tags its creations so the audit trail shows it.
+      const viaAI = req.headers["x-brecx-source"] === "claude-ai";
       logActivity(req, {
         action: "created",
         entity: "invoice",
         entityId: invoiceId,
         entityLabel: rows[0].number,
-        details: `Draft for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}`,
+        details: `Draft for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}${viaAI ? " · via Claude AI" : ""}`,
       });
       return reply.code(201).send({ invoice: rows[0] });
     } catch (err) {

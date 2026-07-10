@@ -138,18 +138,3 @@ export const REPORTS: ReportDef[] = [
 ];
 
 export const REPORT_GROUPS = ["Sales", "Receivables", "Payments Received"];
-
-/** Zoho-parity placeholders — modules that don't exist yet. */
-export const COMING_SOON: Array<{ group: string; items: string[]; why: string }> = [
-  { group: "Sales", items: ["Sales by Sales Person"], why: "Salesperson field is coming later" },
-  {
-    group: "Purchases and Expenses",
-    items: ["Expense Details", "Expenses by Category", "Expenses by Customer"],
-    why: "Expenses module pending",
-  },
-  {
-    group: "Activity",
-    items: ["Activity Logs & Audit Trail", "System Mails"],
-    why: "Audit log pending",
-  },
-];

@@ -190,6 +190,10 @@ export function AppLayout() {
             <ReportsIcon />
             <span className="t">Reports</span>
           </NavLink>
+          <NavLink to="/assistant" className="nav-ai">
+            <AiSparkIcon />
+            <span className="t">Claude AI</span>
+          </NavLink>
 
           <div className="nav-label">Manage</div>
           <NavLink to="/payments">
@@ -382,6 +386,7 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/reports")) return "Reports";
   if (pathname.startsWith("/payments")) return "Payments";
   if (pathname.startsWith("/activity")) return "Activity log";
+  if (pathname.startsWith("/assistant")) return "Claude AI";
   if (pathname.startsWith("/settings/template")) return "Invoice template";
   if (pathname.startsWith("/settings")) return "Settings";
   return "Dashboard";
@@ -457,6 +462,14 @@ function ReportsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M4 20V10M10 20V4M16 20v-8M21 20H3" />
+    </svg>
+  );
+}
+function AiSparkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+      <path d="M12 3c.45 4.3 2 5.85 6.3 6.3-4.3.45-5.85 2-6.3 6.3-.45-4.3-2-5.85-6.3-6.3 4.3-.45 5.85-2 6.3-6.3Z" />
+      <path d="M18.5 14.5c.22 2.1.96 2.84 3.06 3.06-2.1.22-2.84.96-3.06 3.06-.22-2.1-.96-2.84-3.06-3.06 2.1-.22 2.84-.96 3.06-3.06Z" />
     </svg>
   );
 }

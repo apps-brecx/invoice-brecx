@@ -2,8 +2,9 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { GeneralTab } from "./GeneralTab";
 import { SecurityTab } from "./SecurityTab";
 import { UsersTab } from "./UsersTab";
+import { AiTab } from "./AiTab";
 
-const TABS = ["general", "security", "users"] as const;
+const TABS = ["general", "security", "users", "ai"] as const;
 export type SettingsTab = (typeof TABS)[number];
 
 /* Priceobo-style settings: slim sub-nav on the left (grouped Personal /
@@ -29,6 +30,9 @@ function NavIcon({ name }: { name: string }) {
         <circle cx="9" cy="7" r="4" />
         <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
       </>
+    ),
+    ai: (
+      <path d="M12 2.5c.5 4.8 2.2 6.5 7 7-4.8.5-6.5 2.2-7 7-.5-4.8-2.2-6.5-7-7 4.8-.5 6.5-2.2 7-7Z" />
     ),
   };
   return (
@@ -74,12 +78,14 @@ export function Settings() {
           {item("security", "Security")}
           <div className="sn-label">Workspace</div>
           {item("users", "Users")}
+          {item("ai", "Claude AI")}
         </nav>
 
         <div className="set-body">
           {active === "general" && <GeneralTab />}
           {active === "security" && <SecurityTab />}
           {active === "users" && <UsersTab />}
+          {active === "ai" && <AiTab />}
         </div>
       </div>
     </section>

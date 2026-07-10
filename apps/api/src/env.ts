@@ -32,6 +32,9 @@ export const env = {
   // ./.storage (gitignored). Files live here, NOT in the database.
   STORAGE_DIR: opt("STORAGE_DIR"),
 
+  // Claude API — powers the "Claude AI" invoice assistant.
+  ANTHROPIC_API_KEY: opt("ANTHROPIC_API_KEY"),
+
   // Outbound email (customer statements etc.) over classic SMTP.
   SMTP_HOST: opt("SMTP_HOST"),
   SMTP_PORT: Number(opt("SMTP_PORT", "587")),

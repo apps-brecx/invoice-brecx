@@ -16,6 +16,7 @@ import { Reports } from "./pages/Reports/Reports";
 import { ReportView } from "./pages/Reports/ReportView";
 import { Payments } from "./pages/Payments/Payments";
 import { Activity } from "./pages/Activity/Activity";
+import { Assistant } from "./pages/Assistant/Assistant";
 import { Settings } from "./pages/Settings/Settings";
 import { AcceptInvite } from "./pages/AcceptInvite/AcceptInvite";
 import { ShareInvoice } from "./pages/Share/ShareInvoice";
@@ -72,6 +73,7 @@ export default function App() {
         <Route path="/reports/:key" element={<ReportView />} />
         <Route path="/payments" element={<Payments />} />
         <Route path="/activity" element={<Activity />} />
+        <Route path="/assistant" element={<Assistant />} />
         <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
         {/* Old bookmark — the account form now lives on the Users tab. */}
         <Route path="/settings/account" element={<Navigate to="/settings/users" replace />} />

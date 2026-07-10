@@ -3,44 +3,24 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { money, fmtShort } from "../../lib/store";
 import { useTemplate } from "../../lib/template";
-import { DatePicker } from "../../components/DatePicker";
+import { ActionIcon } from "../../components/bits";
+import { DateRangePicker } from "../../components/DateRangePicker";
+import { TableSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
 import { downloadCsv } from "../Dashboard/Dashboard";
 import { REPORTS, type ReportCol } from "./reportDefs";
-
-/* Zoho-style date-range presets. */
-type Preset = "this-month" | "last-month" | "this-quarter" | "this-year" | "all-time" | "custom";
-const PRESETS: Array<{ key: Preset; label: string }> = [
-  { key: "this-month", label: "This Month" },
-  { key: "last-month", label: "Last Month" },
-  { key: "this-quarter", label: "This Quarter" },
-  { key: "this-year", label: "This Year" },
-  { key: "all-time", label: "All Time" },
-  { key: "custom", label: "Custom" },
-];
 
 // Local-date ISO — toISOString() shifts to UTC and lands a day off east of it.
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-function presetRange(p: Preset): [string, string] {
+/** Default range: this month. Cleared range (null) = all time. */
+function thisMonth(): [string, string] {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  switch (p) {
-    case "this-month":
-      return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
-    case "last-month":
-      return [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))];
-    case "this-quarter": {
-      const qs = Math.floor(m / 3) * 3;
-      return [iso(new Date(y, qs, 1)), iso(new Date(y, qs + 3, 0))];
-    }
-    case "this-year":
-      return [iso(new Date(y, 0, 1)), iso(new Date(y, 11, 31))];
-    default:
-      return ["1970-01-01", "2100-12-31"];
-  }
+  return [
+    iso(new Date(now.getFullYear(), now.getMonth(), 1)),
+    iso(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  ];
 }
 
 function fmtCell(col: ReportCol, v: unknown): string {
@@ -67,10 +47,9 @@ export function ReportView() {
   const { template } = useTemplate();
   const def = REPORTS.find((r) => r.key === key);
 
-  const [preset, setPreset] = useState<Preset>("this-month");
-  const [customFrom, setCustomFrom] = useState(presetRange("this-month")[0]);
-  const [customTo, setCustomTo] = useState(presetRange("this-month")[1]);
-  const [applied, setApplied] = useState<[string, string]>(presetRange("this-month"));
+  // null/null → all time; the report re-runs the moment the range changes.
+  const [from, setFrom] = useState<string | null>(thisMonth()[0]);
+  const [to, setTo] = useState<string | null>(thisMonth()[1]);
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   const [rows, setRows] = useState<any[] | null>(null);
 
@@ -93,24 +72,21 @@ export function ReportView() {
   );
 
   useEffect(() => {
-    void run(applied);
-  }, [run, applied]);
+    void run([from ?? "1970-01-01", to ?? "2100-12-31"]);
+  }, [run, from, to]);
 
   if (!def) {
     return (
       <section className="view">
         <div className="empty-note card" style={{ padding: 40 }}>
           <b>Report not found</b>
-          <button className="link" onClick={() => navigate("/reports")}>
-            ← Back to Reports Center
+          <button className="crumb-btn" onClick={() => navigate("/reports")}>
+            ← Back to Reports
           </button>
         </div>
       </section>
     );
   }
-
-  const range: [string, string] =
-    preset === "custom" ? [customFrom, customTo] : presetRange(preset);
 
   const totals: Record<string, number> = {};
   for (const col of def.columns) {
@@ -134,73 +110,66 @@ export function ReportView() {
       <div className="page-head print-hide">
         <div>
           <p className="rv-crumb">
-            <button className="link" onClick={() => navigate("/reports")}>
+            <button type="button" className="crumb-btn" onClick={() => navigate("/reports")}>
               Reports
-            </button>{" "}
-            / {def.group}
+            </button>
+            <span className="crumb-sep">/</span>
+            {def.group}
           </p>
           <h1>{def.name}</h1>
+          <p>{def.desc}</p>
         </div>
         <div className="right">
           <button className="btn btn-ghost" onClick={exportCsv} disabled={!rows?.length}>
-            ⤓ Export
+            <ActionIcon name="download" /> Export
           </button>
           <button className="btn btn-ghost" onClick={() => window.print()}>
-            ⎙ Print
-          </button>
-          <button className="icon-btn" title="Back to Reports Center" onClick={() => navigate("/reports")}>
-            ✕
+            <ActionIcon name="printer" /> Print
           </button>
         </div>
       </div>
 
       <div className="rv-filters print-hide">
-        <span className="rv-lab">Filters :</span>
-        <div className="field" style={{ margin: 0 }}>
-          <select value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
-            {PRESETS.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <small>Date range</small>
-        </div>
-        {preset === "custom" && (
-          <>
-            <div className="field" style={{ margin: 0 }}>
-              <DatePicker value={customFrom} onChange={setCustomFrom} />
-              <small>From</small>
-            </div>
-            <div className="field" style={{ margin: 0 }}>
-              <DatePicker value={customTo} onChange={setCustomTo} />
-              <small>To</small>
-            </div>
-          </>
-        )}
-        <button className="btn btn-primary" onClick={() => setApplied(range)}>
-          Run Report
-        </button>
+        <span className="rv-lab">Date range</span>
+        <DateRangePicker
+          start={from}
+          end={to}
+          onChange={(s, e) => {
+            setFrom(s);
+            setTo(e);
+          }}
+          onClear={() => {
+            setFrom(null);
+            setTo(null);
+          }}
+        />
+        {!from && <span className="rv-alltime">Showing all time — pick a range to narrow it.</span>}
       </div>
 
-      <div className="card rv-paper">
+      <div className="card">
         <div className="rv-head">
-          <span className="rv-org">{template.orgName || "Fresh Finest"}</span>
-          <h2>{def.name}</h2>
-          <span className="rv-range">
-            {applied[0] === "1970-01-01" ? (
-              "All time"
-            ) : (
-              <>
-                From <b>{fmtShort(applied[0])}</b> To <b>{fmtShort(applied[1])}</b>
-              </>
-            )}
-          </span>
-        </div>
-        {rows === null ? (
-          <div className="center-fill" style={{ minHeight: 160 }}>
-            <div className="spinner" />
+          <div>
+            <h2>{def.name}</h2>
+            <span className="rv-range">
+              {template.orgName || "Fresh Finest"} ·{" "}
+              {!from || !to ? (
+                "all time"
+              ) : (
+                <>
+                  {fmtShort(from)} — {fmtShort(to)}
+                </>
+              )}
+            </span>
           </div>
+          {rows !== null && rows.length > 0 && (
+            <span className="rv-count num">
+              {rows.length.toLocaleString("en-US")} row{rows.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+        <div className="panel-body">
+        {rows === null ? (
+          <TableSkeleton rows={6} />
         ) : rows.length === 0 ? (
           <div className="empty-note">
             <b>No data for this period</b>
@@ -250,6 +219,7 @@ export function ReportView() {
             </tbody>
           </table>
         )}
+        </div>
       </div>
     </section>
   );

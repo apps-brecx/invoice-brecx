@@ -297,6 +297,24 @@ export async function initSchema(): Promise<void> {
     `ALTER TABLE invoice_share_links ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';`,
   );
 
+  // Claude AI usage ledger — one row per API call, drives the Settings → AI
+  // spend dashboard. Cost is computed server-side from the model's pricing.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ai_usage (
+      id            BIGSERIAL PRIMARY KEY,
+      feature       TEXT NOT NULL DEFAULT 'assistant',
+      model         TEXT NOT NULL,
+      input_tokens  INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      cost          NUMERIC(10, 6) NOT NULL DEFAULT 0,
+      created_by    TEXT,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC);`);
+
   // Audit trail — one row per meaningful action (create/update/delete/status
   // change/payment) on invoices, customers, items and payments. Rows are
   // append-only; the actor is denormalized so history survives user deletion.

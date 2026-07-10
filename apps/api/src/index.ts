@@ -22,6 +22,7 @@ import reportsRoutes from "./routes/reports.js";
 import activityRoutes from "./routes/activity.js";
 import shareRoutes from "./routes/share.js";
 import invoiceEmailRoutes from "./routes/invoiceEmail.js";
+import assistantRoutes from "./routes/assistant.js";
 
 const app = Fastify({ logger, trustProxy: true });
 
@@ -65,6 +66,7 @@ const api: FastifyPluginAsync = async (instance: FastifyInstance) => {
   await instance.register(activityRoutes);
   await instance.register(shareRoutes);
   await instance.register(invoiceEmailRoutes);
+  await instance.register(assistantRoutes);
 };
 await app.register(api, { prefix: "/api" });
 
