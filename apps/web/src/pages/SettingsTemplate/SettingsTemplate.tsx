@@ -128,10 +128,32 @@ export function SettingsTemplate() {
   }
 
   if (loading) {
+    // Gallery-shaped shimmer: the real page head plus three placeholder
+    // template cards, so nothing jumps when the templates arrive.
     return (
-      <div className="center-fill">
-        <div className="spinner" />
-      </div>
+      <section className="view" aria-busy="true">
+        <div className="page-head">
+          <div>
+            <h1>Invoice templates</h1>
+            <p>Every template previews live — pick one, edit it, or design a new one.</p>
+          </div>
+        </div>
+        <div className="tpl-gallery" aria-hidden="true">
+          {Array.from({ length: 3 }, (_, i) => (
+            <div className="card tpl-gal-card" key={i}>
+              <div className="tpl-skel">
+                <div className="skel-bar w60" />
+                <div className="skel-block" />
+                <div className="skel-bar w80" />
+                <div className="skel-bar w40" />
+              </div>
+              <div className="tpl-gal-foot">
+                <span className="skel-bar" style={{ display: "block", width: `${46 + i * 12}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     );
   }
 

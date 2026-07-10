@@ -15,6 +15,23 @@ export function Stamp({ status }: { status: DisplayStatus }) {
   return <span className={`stamp ${status}`}>{STATUS_LABEL[status]}</span>;
 }
 
+/** Brass spark marking work done through the Claude AI assistant — hover
+ *  shows who asked for it. Used in the invoices list and the activity log. */
+export function AiBadge({ by }: { by?: string | null }) {
+  return (
+    <span
+      className="ai-badge"
+      title={by ? `Created with Claude AI · requested by ${by}` : "Created with Claude AI"}
+      aria-label={by ? `Created with Claude AI, requested by ${by}` : "Created with Claude AI"}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M12 2.5c.5 4.8 2.2 6.5 7 7-4.8.5-6.5 2.2-7 7-.5-4.8-2.2-6.5-7-7 4.8-.5 6.5-2.2 7-7Z" />
+      </svg>
+      AI
+    </span>
+  );
+}
+
 /** Zoho-style status line for the invoices table: "Due in 25 days",
  *  "Overdue by 8 days" — colored, scannable. */
 export function DueText({ status, dueInDays }: { status: DisplayStatus; dueInDays: number }) {

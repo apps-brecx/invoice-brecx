@@ -12,7 +12,7 @@ import {
 } from "../../lib/store";
 import { useTemplate } from "../../lib/template";
 import { InvoicePaper, type PaperData } from "../../components/InvoicePaper";
-import { Stamp, DueText, ActionIcon } from "../../components/bits";
+import { Stamp, DueText, ActionIcon, AiBadge } from "../../components/bits";
 import { DatePicker } from "../../components/DatePicker";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { Menu } from "../../components/Menu";
@@ -487,7 +487,10 @@ export function InvoiceDetail() {
           <>
             <div className="detail-head print-hide">
               <div>
-                <h1>{inv.number}</h1>
+                <h1>
+                  {inv.number}
+                  {inv.viaAi && <AiBadge by={inv.createdBy} />}
+                </h1>
                 <p>
                   {inv.customerName} · issued {fmtLong(inv.issued)}
                   <DueText status={inv.status} dueInDays={inv.dueInDays} />

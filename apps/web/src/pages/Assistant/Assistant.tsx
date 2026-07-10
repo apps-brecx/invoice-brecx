@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../../lib/api";
+import { api, qs } from "../../lib/api";
 import { money, useBilling } from "../../lib/store";
+import { ConfirmModal } from "../../components/ConfirmModal";
 import { useToast } from "../../components/Toast";
 
 /* ------------------------------------------------------------------
@@ -62,11 +63,76 @@ interface Attachment {
 interface ChatMsg {
   role: "user" | "assistant";
   text: string;
+  /** ISO timestamp — shown under the message like claude.ai. */
+  at?: string;
   attachments?: Attachment[];
   invoices?: Array<ProposedInvoice & { createdNumber?: string; creating?: boolean }>;
   templates?: Array<ProposedTemplate & { saved?: boolean; saving?: boolean }>;
   cost?: number;
 }
+interface ChatSummary {
+  id: number;
+  title: string;
+  pinned: boolean;
+  updated_at: string;
+}
+
+/** What goes to the DB: same thread, minus attachment payloads (base64 can
+ *  be megabytes; only the newest message's files ever reach Claude anyway). */
+const stripForStore = (thread: ChatMsg[]): ChatMsg[] =>
+  thread.map((m) => ({
+    ...m,
+    invoices: m.invoices?.map(({ creating, ...p }) => p),
+    templates: m.templates?.map(({ saving, ...t }) => t),
+    attachments: m.attachments?.map((a) => ({ ...a, data: "" })),
+  }));
+
+const titleOf = (thread: ChatMsg[]): string => {
+  const first = thread.find((m) => m.role === "user");
+  const t = first?.text.trim() || first?.attachments?.[0]?.name || "New chat";
+  return t.length > 64 ? `${t.slice(0, 64)}…` : t;
+};
+
+/** Tiny inline-markdown for chat replies — **bold** and `code` only, so
+ *  Claude's answers read like claude.ai without a markdown dependency. */
+function richText(text: string): JSX.Element[] {
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <b key={i}>{part.slice(2, -2)}</b>;
+    if (part.startsWith("`") && part.endsWith("`"))
+      return (
+        <code className="ai-code" key={i}>
+          {part.slice(1, -1)}
+        </code>
+      );
+    return <span key={i}>{part}</span>;
+  });
+}
+
+/** "8:58 PM" for today, "10 Jul · 8:58 PM" otherwise. */
+const msgWhen = (iso?: string): string | null => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  if (sameDay) return time;
+  const day = d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+  return `${day} · ${time}`;
+};
+
+const timeAgo = (iso: string): string => {
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "yesterday" : `${d}d ago`;
+};
 
 type ModelKey = "haiku" | "sonnet" | "opus";
 const MODEL_LABELS: Record<ModelKey, string> = {
@@ -163,6 +229,61 @@ export function Assistant() {
   const endRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  // claude.ai-style Recents: previous chats live in the DB, per user.
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [activeChatId, setActiveChatId] = useState<number | null>(null);
+  // Keyed by "rail:<id>" / "all:<id>" — the same chat renders in both lists.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState<ChatSummary | null>(null);
+
+  // "View all" page (claude.ai/chats style): search + filter + scroll paging.
+  const ALL_PAGE = 30;
+  const [view, setView] = useState<"chat" | "all">("chat");
+  const [allQ, setAllQ] = useState("");
+  const [allFilter, setAllFilter] = useState<"all" | "pinned">("all");
+  const [allChats, setAllChats] = useState<ChatSummary[] | null>(null);
+  const [allTotal, setAllTotal] = useState(0);
+  const allBusy = useRef(false);
+
+  const loadAll = async (reset: boolean, q = allQ, filter = allFilter) => {
+    if (allBusy.current) return;
+    allBusy.current = true;
+    try {
+      const offset = reset ? 0 : (allChats?.length ?? 0);
+      const res = await api.get<{ chats: ChatSummary[]; total: number }>(
+        `/assistant/chats${qs({ q, pinned: filter === "pinned" ? "true" : "", offset, limit: ALL_PAGE })}`,
+      );
+      setAllChats((cur) => (reset ? res.chats : [...(cur ?? []), ...res.chats]));
+      setAllTotal(res.total);
+    } catch {
+      /* list stays as-is */
+    } finally {
+      allBusy.current = false;
+    }
+  };
+
+  // Debounced reload when the search text or filter changes.
+  useEffect(() => {
+    if (view !== "all") return;
+    const t = setTimeout(() => void loadAll(true), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, allQ, allFilter]);
+  const chatIdRef = useRef<number | null>(null);
+  // Latest committed thread — persistence reads this after state settles, so
+  // updaters stay pure (StrictMode double-invokes them in dev).
+  const threadRef = useRef<ChatMsg[]>(thread);
+  useEffect(() => {
+    threadRef.current = thread;
+  }, [thread]);
+  const persistBusy = useRef(false);
+
+  const loadChats = () =>
+    api
+      .get<{ chats: ChatSummary[] }>("/assistant/chats")
+      .then((r) => setChats(r.chats))
+      .catch(() => {});
+
   useEffect(() => {
     api
       .get<{ configured: boolean; defaultModel: ModelKey }>("/assistant/config")
@@ -171,7 +292,153 @@ export function Assistant() {
         setModel(res.defaultModel);
       })
       .catch(() => setConfigured(false));
+    void loadChats();
   }, []);
+
+  /** Create-or-update the active chat from the committed thread. Runs on a
+   *  short timeout so it always reads post-commit state, and never twice in
+   *  parallel (a second create would duplicate the chat). */
+  function schedulePersist() {
+    setTimeout(() => {
+      if (persistBusy.current) {
+        setTimeout(schedulePersist, 250);
+        return;
+      }
+      persistBusy.current = true;
+      const next = threadRef.current;
+      const messages = stripForStore(next);
+      const req = chatIdRef.current
+        ? api.put(`/assistant/chats/${chatIdRef.current}`, { messages })
+        : api
+            .post<{ chat: ChatSummary }>("/assistant/chats", { title: titleOf(next), messages })
+            .then(({ chat }) => {
+              chatIdRef.current = chat.id;
+              setActiveChatId(chat.id);
+            });
+      void req
+        .then(() => loadChats())
+        .catch(() => {
+          /* history is best-effort — the conversation itself already worked */
+        })
+        .finally(() => {
+          persistBusy.current = false;
+        });
+    }, 30);
+  }
+
+  function newChat() {
+    if (busy) return;
+    setThread([]);
+    chatIdRef.current = null;
+    setActiveChatId(null);
+    setInput("");
+    setPending([]);
+    setView("chat");
+  }
+
+  async function openChat(id: number) {
+    if (busy) return;
+    if (id === activeChatId) {
+      setView("chat");
+      return;
+    }
+    try {
+      const { chat } = await api.get<{ chat: { id: number; messages: ChatMsg[] } }>(
+        `/assistant/chats/${id}`,
+      );
+      setThread(chat.messages);
+      chatIdRef.current = chat.id;
+      setActiveChatId(chat.id);
+      setInput("");
+      setPending([]);
+      setView("chat");
+    } catch {
+      toast("Couldn't open that chat", "error");
+      void loadChats();
+    }
+  }
+
+  async function deleteChat(id: number) {
+    try {
+      await api.del(`/assistant/chats/${id}`);
+      setChats((cur) => cur.filter((c) => c.id !== id));
+      setAllChats((cur) => cur && cur.filter((c) => c.id !== id));
+      setAllTotal((n) => Math.max(0, n - 1));
+      if (id === chatIdRef.current) {
+        setThread([]);
+        chatIdRef.current = null;
+        setActiveChatId(null);
+      }
+      toast("Chat deleted");
+    } catch {
+      toast("Couldn't delete the chat", "error");
+    }
+  }
+
+  async function togglePin(c: ChatSummary) {
+    setMenuFor(null);
+    try {
+      await api.patch(`/assistant/chats/${c.id}`, { pinned: !c.pinned });
+      await loadChats();
+      if (view === "all") await loadAll(true);
+    } catch {
+      toast("Couldn't update the chat", "error");
+    }
+  }
+
+  // Any click outside the open ⋯ menu closes it.
+  useEffect(() => {
+    if (menuFor === null) return;
+    const close = () => setMenuFor(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuFor]);
+
+  /** ⋯ options (pin / delete) — shared by the rail rows and the View-all list. */
+  const chatMenu = (c: ChatSummary, where: "rail" | "all") => (
+    <>
+      <button
+        type="button"
+        className="ai-recent-more"
+        aria-label={`Options for "${c.title}"`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          setMenuFor(menuFor === `${where}:${c.id}` ? null : `${where}:${c.id}`);
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
+        </svg>
+      </button>
+      {menuFor === `${where}:${c.id}` && (
+        <div className="ai-menu" role="menu" onMouseDown={(e) => e.stopPropagation()}>
+          <button type="button" role="menuitem" onClick={() => void togglePin(c)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 17v5M9 4h6l1 7 2.5 2.5H5.5L8 11z" />
+            </svg>
+            {c.pinned ? "Unpin" : "Pin"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              setMenuFor(null);
+              setConfirmDel(c);
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
+            </svg>
+            Delete
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -200,7 +467,7 @@ export function Assistant() {
   async function send(textOverride?: string) {
     const text = (textOverride ?? input).trim();
     if ((!text && pending.length === 0) || busy) return;
-    const userMsg: ChatMsg = { role: "user", text, attachments: pending };
+    const userMsg: ChatMsg = { role: "user", text, attachments: pending, at: new Date().toISOString() };
     const nextThread = [...thread, userMsg];
     setThread(nextThread);
     setInput("");
@@ -238,11 +505,13 @@ export function Assistant() {
         {
           role: "assistant",
           text: res.text,
+          at: new Date().toISOString(),
           invoices: res.invoices,
           templates: res.templates,
           cost: res.usage.cost,
         },
       ]);
+      schedulePersist();
     } catch (err) {
       setThread((cur) => cur.slice(0, -1));
       setInput(text);
@@ -269,15 +538,19 @@ export function Assistant() {
       let clientId = proposal.customerId ?? null;
       if (!clientId) {
         /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-        const res = await api.post<{ client: any }>("/clients", {
-          name: proposal.customerName,
-          type: "Business",
-          currency: "USD",
-          language: "English",
-          paymentTerms: proposal.terms || "Due on Receipt",
-          portalEnabled: false,
-          contactPersons: [],
-        });
+        const res = await api.post<{ client: any }>(
+          "/clients",
+          {
+            name: proposal.customerName,
+            type: "Business",
+            currency: "USD",
+            language: "English",
+            paymentTerms: proposal.terms || "Due on Receipt",
+            portalEnabled: false,
+            contactPersons: [],
+          },
+          { "x-brecx-source": "claude-ai" },
+        );
         clientId = res.client.id as number;
       }
       /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -306,6 +579,7 @@ export function Assistant() {
         { "x-brecx-source": "claude-ai" },
       );
       mark({ creating: false, createdNumber: created.invoice.number });
+      schedulePersist();
       await refresh();
       toast(`Draft ${created.invoice.number} created`);
     } catch (err) {
@@ -327,8 +601,9 @@ export function Assistant() {
       );
     mark({ saving: true });
     try {
-      await api.post("/templates", normalizeTemplate(t));
+      await api.post("/templates", normalizeTemplate(t), { "x-brecx-source": "claude-ai" });
       mark({ saving: false, saved: true });
+      schedulePersist();
       toast(`Template “${t.name}” saved to the gallery`);
     } catch (err) {
       mark({ saving: false });
@@ -456,6 +731,141 @@ export function Assistant() {
 
   return (
     <section className="view ai-view">
+      <aside className="ai-side" aria-label="Chat history">
+        <button type="button" className="ai-new" disabled={busy} onClick={newChat}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New chat
+        </button>
+        <div className="ai-side-label">Recents</div>
+        <div className="ai-recents">
+          {chats.length === 0 && (
+            <div className="ai-side-empty">
+              <span className="ai-side-empty-spark" aria-hidden>
+                <SparkIcon size={15} />
+              </span>
+              No chats yet — your
+              <br />
+              conversations land here.
+            </div>
+          )}
+          {chats.map((c) => (
+            <div className={"ai-recent" + (c.id === activeChatId ? " on" : "")} key={c.id}>
+              <button
+                type="button"
+                className="ai-recent-t"
+                title={c.title}
+                disabled={busy}
+                onClick={() => void openChat(c.id)}
+              >
+                <span className="ai-recent-name">
+                  {c.pinned && (
+                    <svg className="ai-pin" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-label="Pinned">
+                      <path d="M16 3l5 5-4.5 1.5L13 13l-.5 5-3.5-3.5L4 19.5 4.5 15 9 10.5 5.5 7 8.5 6z" />
+                    </svg>
+                  )}
+                  {c.title}
+                </span>
+                <span className="ai-recent-time">{timeAgo(c.updated_at)}</span>
+              </button>
+              {chatMenu(c, "rail")}
+            </div>
+          ))}
+        </div>
+        {chats.length > 0 && (
+          <button type="button" className="ai-viewall" onClick={() => setView("all")}>
+            View all chats →
+          </button>
+        )}
+      </aside>
+
+      <div className="ai-main">
+      {view === "all" ? (
+        <div className="ai-all">
+          <div className="ai-all-head">
+            <div>
+              <h1>Chats</h1>
+              <span className="ai-all-count">
+                {allTotal} conversation{allTotal === 1 ? "" : "s"}
+              </span>
+            </div>
+            <button type="button" className="btn btn-ghost" onClick={() => setView("chat")}>
+              ← Back to chat
+            </button>
+          </div>
+          <div className="ai-all-tools">
+            <label className="ai-all-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <input
+                placeholder="Search chats…"
+                value={allQ}
+                onChange={(e) => setAllQ(e.target.value)}
+                aria-label="Search chats"
+              />
+            </label>
+            <div className="ai-all-filter" role="radiogroup" aria-label="Filter chats">
+              {(["all", "pinned"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  role="radio"
+                  aria-checked={allFilter === f}
+                  className={"ai-all-chip" + (allFilter === f ? " on" : "")}
+                  onClick={() => setAllFilter(f)}
+                >
+                  {f === "all" ? "All" : "Pinned"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div
+            className="ai-all-list"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (
+                el.scrollTop + el.clientHeight >= el.scrollHeight - 160 &&
+                (allChats?.length ?? 0) < allTotal
+              ) {
+                void loadAll(false);
+              }
+            }}
+          >
+            {allChats === null && <div className="ai-all-empty">Loading…</div>}
+            {allChats?.length === 0 && (
+              <div className="ai-all-empty">No chats match{allQ ? ` “${allQ}”` : ""}.</div>
+            )}
+            {allChats?.map((c) => (
+              <div className={"ai-all-row" + (c.id === activeChatId ? " on" : "")} key={c.id}>
+                <button type="button" className="ai-all-row-t" onClick={() => void openChat(c.id)}>
+                  <span className="ai-all-ic" aria-hidden>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.2-.6L3 21l1.7-5.8a8.4 8.4 0 1 1 16.3-3.7Z" />
+                    </svg>
+                  </span>
+                  <span className="ai-all-title">
+                    {c.pinned && (
+                      <svg className="ai-pin" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-label="Pinned">
+                        <path d="M16 3l5 5-4.5 1.5L13 13l-.5 5-3.5-3.5L4 19.5 4.5 15 9 10.5 5.5 7 8.5 6z" />
+                      </svg>
+                    )}
+                    {c.title}
+                  </span>
+                  <span className="ai-all-time">{timeAgo(c.updated_at)}</span>
+                </button>
+                {chatMenu(c, "all")}
+              </div>
+            ))}
+            {allChats !== null && allChats.length > 0 && allChats.length < allTotal && (
+              <div className="ai-all-more">Scroll for more…</div>
+            )}
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="ai-thread-wrap">
         <div className="ai-thread">
           {thread.length === 0 && (
@@ -497,6 +907,7 @@ export function Assistant() {
                   </div>
                 )}
                 {m.text && <div className="ai-bubble">{m.text}</div>}
+                {msgWhen(m.at) && <span className="ai-when num">{msgWhen(m.at)}</span>}
               </div>
             ) : (
               <div className="ai-msg assistant" key={i}>
@@ -504,12 +915,17 @@ export function Assistant() {
                   <SparkIcon size={13} />
                 </span>
                 <div className="ai-body">
-                  {m.text && <div className="ai-text">{m.text}</div>}
+                  {m.text && <div className="ai-text">{richText(m.text)}</div>}
                   {m.invoices?.map((p, j) => invoiceCard(p, i, j))}
                   {m.templates?.map((t, j) => templateCard(t, i, j))}
-                  {m.cost !== undefined && (
-                    <span className="ai-cost num" title="What this reply cost">
-                      {m.cost < 0.005 ? "<$0.01" : `$${m.cost.toFixed(2)}`}
+                  {(m.at || m.cost !== undefined) && (
+                    <span className="ai-meta-row">
+                      {msgWhen(m.at) && <span className="ai-when num">{msgWhen(m.at)}</span>}
+                      {m.cost !== undefined && (
+                        <span className="ai-cost num" title="What this reply cost">
+                          {m.cost < 0.005 ? "<$0.01" : `$${m.cost.toFixed(2)}`}
+                        </span>
+                      )}
                     </span>
                   )}
                 </div>
@@ -533,6 +949,7 @@ export function Assistant() {
         </div>
       </div>
 
+      <div className="ai-dock">
       <div
         className={"ai-composer" + (dragOver ? " drag" : "")}
         onDragOver={(e) => {
@@ -624,6 +1041,28 @@ export function Assistant() {
           </button>
         </div>
       </div>
+      <p className="ai-dock-note">Claude can make mistakes — review each draft before creating it.</p>
+      </div>
+      </>
+      )}
+      </div>
+
+      {confirmDel && (
+        <ConfirmModal
+          title="Delete this chat?"
+          message={
+            <>
+              &ldquo;{confirmDel.title}&rdquo; will be permanently deleted. This can&apos;t be undone.
+            </>
+          }
+          confirmLabel="Delete chat"
+          onConfirm={() => {
+            void deleteChat(confirmDel.id);
+            setConfirmDel(null);
+          }}
+          onClose={() => setConfirmDel(null)}
+        />
+      )}
     </section>
   );
 }

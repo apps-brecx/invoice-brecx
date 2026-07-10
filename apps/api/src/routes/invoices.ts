@@ -33,6 +33,7 @@ const ENRICHED = `
   SELECT i.*, c.name AS client_name, c.company AS client_company,
          pt.paid_total,
          (i.total - pt.paid_total)::numeric(14,2) AS balance,
+         COALESCE(NULLIF(TRIM(u.name), ''), i.created_by) AS created_by_name,
          CASE
            WHEN i.status = 'draft' THEN 'draft'
            WHEN i.status = 'void' THEN 'void'
@@ -44,6 +45,7 @@ const ENRICHED = `
          (i.due_date - CURRENT_DATE)::int AS due_in_days
     FROM invoices i
     JOIN clients c ON c.id = i.client_id
+    LEFT JOIN users u ON u.email = i.created_by
     LEFT JOIN LATERAL (
       SELECT COALESCE(SUM(p.amount), 0)::numeric(14,2) AS paid_total
         FROM payments p WHERE p.invoice_id = i.id
@@ -64,7 +66,8 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               t.due_in_days, t.order_number, t.terms, t.subject, t.currency,
               t.discount_pct, t.tax_rate, t.shipping, t.adjustment,
               t.subtotal, t.tax_total, t.total, t.paid_total, t.balance,
-              t.sent_at, t.created_at, t.client_id, t.client_name, t.client_company
+              t.sent_at, t.created_at, t.created_by_name, t.via_ai,
+              t.client_id, t.client_name, t.client_company
          FROM (${ENRICHED}) t
         WHERE ${statusCond}
           AND ($1 = '' OR t.number ILIKE '%' || $1 || '%'
@@ -138,12 +141,15 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
+      // The Claude AI assistant tags its creations — the flag drives the
+      // spark badge in the invoices list and the audit trail.
+      const viaAI = req.headers["x-brecx-source"] === "claude-ai";
       const inserted = await db.query(
         `INSERT INTO invoices (client_id, order_number, issue_date, due_date, terms,
                                subject, currency, tax_rate, discount_pct, shipping,
                                adjustment, subtotal, tax_total, total, notes,
-                               terms_conditions, send_later_at, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                               terms_conditions, send_later_at, created_by, via_ai)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
          RETURNING id`,
         [
           body.clientId, body.orderNumber || null, body.issueDate, body.dueDate,
@@ -151,7 +157,7 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           body.discountPct, body.shipping, body.adjustment,
           totals.subtotal, totals.taxTotal, totals.total,
           body.notes || null, body.termsConditions || null,
-          body.sendLaterAt || null, req.user!.email,
+          body.sendLaterAt || null, req.user!.email, viaAI,
         ],
       );
       const invoiceId = inserted.rows[0].id as number;
@@ -172,14 +178,12 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       await db.query("COMMIT");
       const { rows } = await query(`SELECT * FROM (${ENRICHED}) t WHERE t.id = $1`, [invoiceId]);
-      // The Claude AI assistant tags its creations so the audit trail shows it.
-      const viaAI = req.headers["x-brecx-source"] === "claude-ai";
       logActivity(req, {
         action: "created",
         entity: "invoice",
         entityId: invoiceId,
         entityLabel: rows[0].number,
-        details: `Draft for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}${viaAI ? " · via Claude AI" : ""}`,
+        details: `Draft for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}`,
       });
       return reply.code(201).send({ invoice: rows[0] });
     } catch (err) {

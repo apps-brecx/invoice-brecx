@@ -5,6 +5,7 @@ import { fmtDateTime, useBilling } from "../../lib/store";
 import { DateRangePicker } from "../../components/DateRangePicker";
 import { Pagination } from "../../components/Pagination";
 import { Select } from "../../components/Select";
+import { AiBadge } from "../../components/bits";
 import { EmptyState, SearchOffIcon } from "../../components/EmptyState";
 import { TableSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
@@ -53,6 +54,7 @@ interface Entry {
   entity_id: number | null;
   entity_label: string | null;
   details: string | null;
+  via_ai: boolean;
   created_at: string;
 }
 
@@ -248,7 +250,10 @@ export function Activity() {
                       >
                         <td className="num">{fmtDateTime(e.created_at)}</td>
                         <td>
-                          <span className="act-user">{e.actor ?? "—"}</span>
+                          <span className="act-user">
+                            {e.actor ?? "—"}
+                            {e.via_ai && <AiBadge by={e.actor} />}
+                          </span>
                         </td>
                         <td>
                           <span className={`act-chip ${a.tone}`}>{a.label}</span>

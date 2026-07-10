@@ -11,7 +11,7 @@ import {
 import { api } from "../../lib/api";
 import { exportInvoicesPdf, exportInvoicesZip } from "../../lib/invoicePdf";
 import { useTemplate } from "../../lib/template";
-import { Stamp, DueText, KpiIcon, ActionIcon } from "../../components/bits";
+import { Stamp, DueText, KpiIcon, ActionIcon, AiBadge } from "../../components/bits";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { ImportInvoicesModal } from "../../components/ImportInvoicesModal";
 import { Menu } from "../../components/Menu";
@@ -515,6 +515,7 @@ export function Invoices() {
                         <span className="inv-id">
                           {inv.number}
                           {inv.orderNumber ? ` (${inv.orderNumber})` : ""}
+                          {inv.viaAi && <AiBadge by={inv.createdBy} />}
                         </span>
                       </td>
                       <td className="num">{inv.orderNumber ?? "—"}</td>

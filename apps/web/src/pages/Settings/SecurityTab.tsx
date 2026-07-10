@@ -8,6 +8,7 @@ import {
   fmtShortDate,
   type SessionInfo,
 } from "../../lib/team";
+import { ListSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
 
 export function SecurityTab() {
@@ -130,11 +131,7 @@ export function SecurityTab() {
           </span>
         </div>
         <div className="sess-list">
-          {sessions === null && (
-            <div className="sc-body set-loading">
-              <div className="spinner" />
-            </div>
-          )}
+          {sessions === null && <ListSkeleton rows={2} />}
           {sessions?.length === 0 && (
             <div className="sc-body">
               <div className="empty-note">

@@ -4,6 +4,7 @@ import { api, ApiError } from "../../lib/api";
 import { fetchWorkspace, saveWorkspace, type WorkspaceSettings } from "../../lib/team";
 import { Select } from "../../components/Select";
 import { SearchSelect } from "../../components/SearchSelect";
+import { FormSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
 
 function timezones(): string[] {
@@ -58,9 +59,13 @@ export function GeneralTab() {
 
   if (!ws) {
     return (
-      <div className="card set-card">
-        <div className="sc-body set-loading">
-          <div className="spinner" />
+      <div className="card set-card" aria-busy="true">
+        <div className="sc-head">
+          <h2>Workspace</h2>
+          <span className="sc-sub">General workspace configuration</span>
+        </div>
+        <div className="sc-body">
+          <FormSkeleton fields={5} />
         </div>
       </div>
     );

@@ -315,6 +315,27 @@ export async function initSchema(): Promise<void> {
   `);
   await query(`CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC);`);
 
+  // Claude AI chat history — one row per conversation, whole thread as JSON
+  // (attachment payloads stripped client-side; only names/sizes persist).
+  // Scoped per user, like claude.ai's Recents.
+  await query(`
+    CREATE TABLE IF NOT EXISTS ai_chats (
+      id         BIGSERIAL PRIMARY KEY,
+      title      TEXT NOT NULL DEFAULT 'New chat',
+      messages   JSONB NOT NULL DEFAULT '[]',
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(
+    `CREATE INDEX IF NOT EXISTS ai_chats_user_idx ON ai_chats (created_by, updated_at DESC);`,
+  );
+  await query(`ALTER TABLE ai_chats ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;`);
+  // Claude AI provenance — invoices created through the assistant carry a
+  // flag so lists can show the spark badge next to the creator.
+  await query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS via_ai BOOLEAN NOT NULL DEFAULT FALSE;`);
+
   // Audit trail — one row per meaningful action (create/update/delete/status
   // change/payment) on invoices, customers, items and payments. Rows are
   // append-only; the actor is denormalized so history survives user deletion.
@@ -332,6 +353,9 @@ export async function initSchema(): Promise<void> {
   `);
   await query(`CREATE INDEX IF NOT EXISTS activity_log_created_idx ON activity_log (created_at DESC);`);
   await query(`CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity, created_at DESC);`);
+  // Actions taken through the Claude AI assistant are flagged so the audit
+  // trail shows the spark badge next to the actor.
+  await query(`ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS via_ai BOOLEAN NOT NULL DEFAULT FALSE;`);
 
   // Invoice templates — each row is a full TemplateSettings blob; exactly
   // one is active (used on every invoice + print).

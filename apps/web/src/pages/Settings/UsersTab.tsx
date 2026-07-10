@@ -17,6 +17,7 @@ import {
 import { Select } from "../../components/Select";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { Tooltip } from "../../components/Tooltip";
+import { ListSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
 
 const ROLE_OPTIONS = [
@@ -223,9 +224,7 @@ export function UsersTab() {
               </button>
             </div>
             {team === null ? (
-              <div className="sc-body set-loading">
-                <div className="spinner" />
-              </div>
+              <ListSkeleton rows={3} />
             ) : (
               <table className="ledger team-table">
                 <thead>

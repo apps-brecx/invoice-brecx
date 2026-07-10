@@ -359,6 +359,113 @@ const assistantRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     },
   );
 
+  /* ---- chat history (claude.ai-style Recents, scoped per user) ---- */
+
+  const storedMsgSchema = z
+    .object({ role: z.enum(["user", "assistant"]), text: z.string().max(20_000) })
+    .passthrough();
+  const chatBodySchema = z.object({
+    title: z.string().trim().min(1).max(120).optional(),
+    messages: z.array(storedMsgSchema).max(80),
+  });
+  const chatIdParam = z.object({ id: z.coerce.number().int().positive() });
+  const whoIs = (req: { user?: { email: string } | null }) => req.user?.email ?? "";
+
+  app.get("/assistant/chats", { preHandler: app.requireAuth }, async (req) => {
+    const qs = z
+      .object({
+        q: z.string().trim().max(200).optional(),
+        pinned: z.enum(["true", "false"]).optional(),
+        offset: z.coerce.number().int().min(0).default(0),
+        limit: z.coerce.number().int().min(1).max(100).default(100),
+      })
+      .parse(req.query ?? {});
+    const where = `created_by = $1
+        AND ($2::text = '' OR title ILIKE '%' || $2 || '%')
+        AND ($3::bool = FALSE OR pinned)`;
+    const params = [whoIs(req), qs.q ?? "", qs.pinned === "true"];
+    const { rows } = await query(
+      `SELECT id, title, pinned, updated_at FROM ai_chats
+        WHERE ${where}
+        ORDER BY pinned DESC, updated_at DESC LIMIT $4 OFFSET $5`,
+      [...params, qs.limit, qs.offset],
+    );
+    const total = await query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM ai_chats WHERE ${where}`,
+      params,
+    );
+    return { chats: rows, total: total.rows[0].n };
+  });
+
+  // Pin / rename without touching messages (updated_at stays put so the
+  // recency order isn't disturbed by a pin toggle).
+  app.patch("/assistant/chats/:id", { preHandler: app.requireAuth }, async (req, reply) => {
+    const { id } = chatIdParam.parse(req.params);
+    const body = z
+      .object({
+        pinned: z.boolean().optional(),
+        title: z.string().trim().min(1).max(120).optional(),
+      })
+      .parse(req.body);
+    const { rows } = await query(
+      `UPDATE ai_chats SET pinned = COALESCE($1, pinned), title = COALESCE($2, title)
+        WHERE id = $3 AND created_by = $4 RETURNING id, title, pinned, updated_at`,
+      [body.pinned ?? null, body.title ?? null, id, whoIs(req)],
+    );
+    if (!rows[0]) return reply.code(404).send({ error: "Chat not found." });
+    return { chat: rows[0] };
+  });
+
+  app.get("/assistant/chats/:id", { preHandler: app.requireAuth }, async (req, reply) => {
+    const { id } = chatIdParam.parse(req.params);
+    const { rows } = await query(
+      `SELECT id, title, messages, updated_at FROM ai_chats WHERE id = $1 AND created_by = $2`,
+      [id, whoIs(req)],
+    );
+    if (!rows[0]) return reply.code(404).send({ error: "Chat not found." });
+    return { chat: rows[0] };
+  });
+
+  app.post(
+    "/assistant/chats",
+    { preHandler: app.requireAuth, bodyLimit: 8 * 1024 * 1024 },
+    async (req, reply) => {
+      const body = chatBodySchema.parse(req.body);
+      const { rows } = await query(
+        `INSERT INTO ai_chats (title, messages, created_by)
+         VALUES ($1, $2, $3) RETURNING id, title, updated_at`,
+        [body.title ?? "New chat", JSON.stringify(body.messages), whoIs(req)],
+      );
+      return reply.code(201).send({ chat: rows[0] });
+    },
+  );
+
+  app.put(
+    "/assistant/chats/:id",
+    { preHandler: app.requireAuth, bodyLimit: 8 * 1024 * 1024 },
+    async (req, reply) => {
+      const { id } = chatIdParam.parse(req.params);
+      const body = chatBodySchema.parse(req.body);
+      const { rows } = await query(
+        `UPDATE ai_chats SET messages = $1, title = COALESCE($2, title), updated_at = NOW()
+          WHERE id = $3 AND created_by = $4 RETURNING id, title, updated_at`,
+        [JSON.stringify(body.messages), body.title ?? null, id, whoIs(req)],
+      );
+      if (!rows[0]) return reply.code(404).send({ error: "Chat not found." });
+      return { chat: rows[0] };
+    },
+  );
+
+  app.delete("/assistant/chats/:id", { preHandler: app.requireAuth }, async (req, reply) => {
+    const { id } = chatIdParam.parse(req.params);
+    const { rowCount } = await query(`DELETE FROM ai_chats WHERE id = $1 AND created_by = $2`, [
+      id,
+      whoIs(req),
+    ]);
+    if (!rowCount) return reply.code(404).send({ error: "Chat not found." });
+    return { ok: true };
+  });
+
   // Spend dashboard: daily bars + by-model table + totals for a date range.
   app.get("/assistant/usage", { preHandler: app.requireAuth }, async (req) => {
     const qs = z

@@ -46,7 +46,7 @@ const activityRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       params,
     );
     const { rows } = await query(
-      `SELECT id, actor, action, entity, entity_id, entity_label, details, created_at
+      `SELECT id, actor, action, entity, entity_id, entity_label, details, via_ai, created_at
          FROM activity_log
         WHERE ${where}
         ORDER BY created_at DESC, id DESC

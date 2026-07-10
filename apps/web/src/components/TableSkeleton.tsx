@@ -84,6 +84,42 @@ export function PaperSkeleton() {
   );
 }
 
+/** Form-shaped shimmer for settings cards — label + input pairs ending in a
+ *  save-button bar, so the card keeps its final height while loading. */
+export function FormSkeleton({ fields = 4 }: { fields?: number }) {
+  const labels = [110, 150, 90, 135, 120, 100];
+  return (
+    <div className="skel-form" aria-hidden="true">
+      {Array.from({ length: fields }, (_, i) => (
+        <div className="skel-field" key={i}>
+          <span className="skel-bar" style={{ width: labels[i % labels.length], height: 11 }} />
+          <span className="skel-bar input" />
+        </div>
+      ))}
+      <span className="skel-bar" style={{ width: 120, height: 34, borderRadius: 8, alignSelf: "flex-end" }} />
+    </div>
+  );
+}
+
+/** List-row shimmer (sessions, team members) — leading icon + two stacked
+ *  lines + a trailing action pill per row. */
+export function ListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="skel-list-row" key={i}>
+          <span className="skel-bar sq" />
+          <span className="skel-list-main">
+            <span className="skel-bar" style={{ width: `${34 + ((i * 19) % 30)}%` }} />
+            <span className="skel-bar" style={{ width: `${52 + ((i * 13) % 26)}%`, height: 10 }} />
+          </span>
+          <span className="skel-bar" style={{ width: 70, height: 26, borderRadius: 8 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Shimmering placeholder rows shaped like the ledger table — shown while a
  *  list loads instead of a spinner. Bar widths vary per row so it reads as
  *  real content, not a repeated pattern. */

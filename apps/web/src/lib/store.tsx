@@ -61,6 +61,9 @@ export interface Invoice {
   balance: number;
   sentAt: string | null;
   createdAt: string;
+  createdBy: string | null;
+  /** Drafted through the Claude AI assistant — drives the spark badge. */
+  viaAi: boolean;
 }
 
 export interface Payment {
@@ -213,6 +216,8 @@ export function mapInvoice(row: any): Invoice {
     balance: num(row.balance),
     sentAt: row.sent_at ?? null,
     createdAt: row.created_at ?? "",
+    createdBy: row.created_by_name ?? row.created_by ?? null,
+    viaAi: row.via_ai ?? false,
   };
 }
 
