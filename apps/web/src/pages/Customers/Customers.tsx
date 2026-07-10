@@ -51,12 +51,12 @@ export function Customers() {
   const hasOverdue = (c: Customer) =>
     invoices.some((i) => i.customerId === c.id && i.status === "overdue");
 
-  const VIEWS: Array<{ key: View; label: string; test: (c: Customer) => boolean }> = [
-    { key: "all", label: "All", test: () => true },
-    { key: "business", label: "Business", test: (c) => c.type === "Business" },
-    { key: "individual", label: "Individual", test: (c) => c.type === "Individual" },
-    { key: "open", label: "Open Balance", test: (c) => openOf(c) > 0 },
-    { key: "overdue", label: "Overdue", test: hasOverdue },
+  const VIEWS: Array<{ key: View; label: string; title: string; test: (c: Customer) => boolean }> = [
+    { key: "all", label: "All", title: "All Customers", test: () => true },
+    { key: "business", label: "Business", title: "Business Customers", test: (c) => c.type === "Business" },
+    { key: "individual", label: "Individual", title: "Individual Customers", test: (c) => c.type === "Individual" },
+    { key: "open", label: "Open Balance", title: "Open Balance", test: (c) => openOf(c) > 0 },
+    { key: "overdue", label: "Overdue", title: "Overdue Customers", test: hasOverdue },
   ];
   const activeView = VIEWS.find((v) => v.key === view)!;
 
@@ -196,6 +196,10 @@ export function Customers() {
 
   return (
     <section className="view">
+      <div className="page-head">
+        <h1>{activeView.title}</h1>
+      </div>
+
       <div className="list-toolbar with-actions">
         <label className="list-search">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

@@ -17,12 +17,12 @@ const PAGE_SIZES = [15, 25, 50, 100];
 
 /* Zoho-style saved views for items. */
 type View = "all" | "active" | "inactive" | "goods" | "services";
-const VIEWS: Array<{ key: View; label: string; test: (i: Item) => boolean }> = [
-  { key: "all", label: "All", test: () => true },
-  { key: "active", label: "Active", test: (i) => i.active },
-  { key: "inactive", label: "Inactive", test: (i) => !i.active },
-  { key: "goods", label: "Goods", test: (i) => i.type === "Goods" },
-  { key: "services", label: "Services", test: (i) => i.type === "Service" },
+const VIEWS: Array<{ key: View; label: string; title: string; test: (i: Item) => boolean }> = [
+  { key: "all", label: "All", title: "All Items", test: () => true },
+  { key: "active", label: "Active", title: "Active Items", test: (i) => i.active },
+  { key: "inactive", label: "Inactive", title: "Inactive Items", test: (i) => !i.active },
+  { key: "goods", label: "Goods", title: "Goods", test: (i) => i.type === "Goods" },
+  { key: "services", label: "Services", title: "Services", test: (i) => i.type === "Service" },
 ];
 
 type SortKey = "name" | "rate";
@@ -160,6 +160,10 @@ export function Items() {
 
   return (
     <section className="view">
+      <div className="page-head">
+        <h1>{activeView.title}</h1>
+      </div>
+
       <div className="list-toolbar with-actions">
         <label className="list-search">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

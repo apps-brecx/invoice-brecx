@@ -49,10 +49,6 @@ export function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
-  const openCount = invoices.filter(
-    (i) => i.status !== "paid" && i.status !== "draft" && i.status !== "void" && i.balance > 0,
-  ).length;
-
   const notifs = useMemo(() => buildNotifs(invoices), [invoices]);
   const [notifOpen, setNotifOpen] = useState(false);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
@@ -162,23 +158,33 @@ export function AppLayout() {
             </span>
             </Tooltip>
           </NavLink>
-          <NavLink
-            to="/invoices"
-            className={() => {
-              // Detail/edit pages keep this lit; only "New invoice" (its own
-              // nav item below) opts out.
-              const on =
-                pathname.startsWith("/invoices") && !pathname.startsWith("/invoices/new");
-              return on ? "active" : "";
-            }}
-          >
+          <NavLink to="/invoices">
             <InvoiceIcon />
             <span className="t">Invoices</span>
-            {openCount > 0 && <span className="count hot">{openCount}</span>}
-          </NavLink>
-          <NavLink to="/invoices/new">
-            <PlusIcon />
-            <span className="t">New invoice</span>
+            <Tooltip label="New invoice">
+            <span
+              className="nav-add"
+              role="button"
+              tabIndex={0}
+              aria-label="New invoice"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                navigate("/invoices/new");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navigate("/invoices/new");
+                }
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </span>
+            </Tooltip>
           </NavLink>
           <NavLink to="/reports">
             <ReportsIcon />
@@ -189,6 +195,10 @@ export function AppLayout() {
           <NavLink to="/payments">
             <PaymentsIcon />
             <span className="t">Payments</span>
+          </NavLink>
+          <NavLink to="/activity">
+            <ActivityIcon />
+            <span className="t">Activity</span>
           </NavLink>
           <NavLink to="/settings/template">
             <TemplateIcon />
@@ -359,7 +369,7 @@ export function AppLayout() {
 }
 
 function sectionName(pathname: string): string {
-  if (/^\/(payments|settings)/.test(pathname)) return "Manage";
+  if (/^\/(payments|activity|settings)/.test(pathname)) return "Manage";
   return "Workspace";
 }
 
@@ -371,6 +381,7 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/items")) return "Items";
   if (pathname.startsWith("/reports")) return "Reports";
   if (pathname.startsWith("/payments")) return "Payments";
+  if (pathname.startsWith("/activity")) return "Activity log";
   if (pathname.startsWith("/settings/template")) return "Invoice template";
   if (pathname.startsWith("/settings")) return "Settings";
   return "Dashboard";
@@ -424,14 +435,6 @@ function InvoiceIcon() {
     </svg>
   );
 }
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v8M8 12h8" />
-    </svg>
-  );
-}
 function CustomersIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -454,6 +457,14 @@ function ReportsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M4 20V10M10 20V4M16 20v-8M21 20H3" />
+    </svg>
+  );
+}
+function ActivityIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.5 2" />
     </svg>
   );
 }

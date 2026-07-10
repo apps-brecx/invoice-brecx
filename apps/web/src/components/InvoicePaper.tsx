@@ -870,8 +870,10 @@ export function InvoicePaper({
       className={`paper inv-paper ${tpl.layout} h-${tpl.headerStyle} t-${tpl.tableStyle}${selectable ? " studio" : ""}`}
       style={style}
     >
-      {data.status && data.status !== "due" && (
-        <span className={`ribbon ${data.status}`}>{STATUS_LABEL[data.status]}</span>
+      {data.status && (
+        <span className={`ribbon ${data.status}`}>
+          {data.status === "due" ? "Sent" : STATUS_LABEL[data.status]}
+        </span>
       )}
       {tpl.blocks
         .filter((b) => b.show)

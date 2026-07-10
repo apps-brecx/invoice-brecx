@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { clientInputSchema, clientCommentSchema, type ClientInput } from "@inv/shared";
 import { query } from "../db.js";
+import { logActivity } from "../lib/activity.js";
 import { env } from "../env.js";
 import { DOC_MIMES, saveClientDoc, readClientDoc, deleteClientDoc } from "../lib/storage.js";
 import { smtpConfigured, sendMail } from "../lib/mailer.js";
@@ -151,6 +152,13 @@ const clientsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       `INSERT INTO clients (${cols.join(", ")}) VALUES (${placeholders}) RETURNING *`,
       values,
     );
+    logActivity(req, {
+      action: "created",
+      entity: "customer",
+      entityId: rows[0].id,
+      entityLabel: rows[0].name,
+      details: `${body.type} customer added${body.email ? ` · ${body.email}` : ""}`,
+    });
     return reply.code(201).send({ client: rows[0] });
   });
 
@@ -166,6 +174,13 @@ const clientsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       [...values, id],
     );
     if (!rows[0]) return reply.code(404).send({ error: "Client not found." });
+    logActivity(req, {
+      action: "updated",
+      entity: "customer",
+      entityId: id,
+      entityLabel: rows[0].name,
+      details: "Customer details edited",
+    });
     return { client: rows[0] };
   });
 
@@ -180,6 +195,12 @@ const clientsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       [active, by, id],
     );
     if (!rows[0]) return reply.code(404).send({ error: "Client not found." });
+    logActivity(req, {
+      action: active ? "marked_active" : "marked_inactive",
+      entity: "customer",
+      entityId: id,
+      entityLabel: rows[0].name,
+    });
     return { client: rows[0] };
   });
 
@@ -197,8 +218,15 @@ const clientsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       `SELECT storage_key FROM client_documents WHERE client_id = $1`,
       [id],
     );
+    const client = await query<{ name: string }>(`SELECT name FROM clients WHERE id = $1`, [id]);
     await query(`DELETE FROM clients WHERE id = $1`, [id]);
     for (const d of docs.rows) deleteClientDoc(d.storage_key);
+    logActivity(req, {
+      action: "deleted",
+      entity: "customer",
+      entityId: id,
+      entityLabel: client.rows[0]?.name ?? null,
+    });
     return { ok: true };
   });
 

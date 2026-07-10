@@ -296,20 +296,19 @@ input,select,textarea{font-family:var(--font-body);font-size:inherit;color:inher
 
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px -18px rgba(16,24,40,.18)}
 
-/* Stamp — the signature status mark */
+/* Status badge — solid tinted pill, readable at a glance (replaced the
+   rubber-stamp watermark look, which was too faint). */
 .stamp{
-  display:inline-block;font-family:var(--font-display);font-weight:800;
-  font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
-  padding:3px 9px;border-radius:4px;border:2px solid currentColor;
-  transform:rotate(-4deg);
-  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='30'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .82 0'/></filter><rect width='80' height='30' filter='url(%23n)' fill='white'/></svg>");
-  mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='30'><filter id='n'><feTurbulence baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .82 0'/></filter><rect width='80' height='30' filter='url(%23n)' fill='white'/></svg>");
+  display:inline-block;font-weight:700;
+  font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  padding:3px 10px;border-radius:20px;white-space:nowrap;
 }
-.stamp.paid{color:var(--green)}
-.stamp.due{color:var(--brass)}
-.stamp.overdue{color:var(--red)}
-.stamp.draft{color:var(--mut-2)}
-.stamp.partial{color:#5B6FA8}
+.stamp.paid{background:var(--green-soft);color:var(--green)}
+.stamp.due{background:#FAF3E2;color:var(--brass)}
+.stamp.overdue{background:#FBEDE9;color:var(--red)}
+.stamp.draft{background:var(--line-soft);color:var(--mut)}
+.stamp.partial{background:#EAF0FB;color:#4A69B8}
+.stamp.void{background:#E9EAEE;color:var(--ink-2)}
 
 /* Ledger table — Zoho-grade list view */
 .ledger{width:100%;border-collapse:separate;border-spacing:0}
@@ -391,6 +390,23 @@ button.inv-id:hover{text-decoration:underline}
 .skel-head .skel-bar{height:13px}
 .skel-kv{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:10px 0}
 .skel-kv .skel-bar{height:12px}
+/* Pager placeholder pinned to the mini-list bottom, like the real .mini-foot */
+.skel-mini-foot{
+  display:flex;justify-content:center;gap:6px;
+  margin-top:auto;padding:12px;border-top:1px solid var(--line-soft);
+}
+.skel-mini-foot .skel-bar{width:26px;height:26px;border-radius:8px}
+
+/* Invoice-paper-shaped skeleton (detail pane, while one invoice loads) */
+.paper-skel{display:flex;flex-direction:column;gap:16px}
+.paper-skel .skel-bar{display:block}
+.paper-skel-paper{padding:28px;display:flex;flex-direction:column;gap:13px;max-width:760px}
+.psk-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.psk-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.psk-cols > div{display:flex;flex-direction:column;gap:9px}
+.psk-right{align-items:flex-end}
+.psk-row{display:flex;gap:16px;align-items:center;padding:4px 0}
+.psk-tot{display:flex;flex-direction:column;gap:9px;align-items:flex-end;margin-top:12px}
 
 /* Ledger-shaped loading skeleton */
 .skel-table{padding:2px 0 6px}
@@ -521,8 +537,9 @@ button.inv-id:hover{text-decoration:underline}
 
 /* ---- Priceobo-style list toolbar: search + filters ---- */
 .list-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-/* Items layout: search stays a modest width on the left, actions hug the right */
-.list-toolbar.with-actions .list-search{flex:0 1 480px}
+/* Search stays a modest width on the left (same across all list pages);
+   actions hug the right when present */
+.list-toolbar .list-search{flex:0 1 480px}
 .list-toolbar.with-actions .tb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 
 /* Priceobo-style saved-view tabs (replaces the "All … ▾" title dropdown) */
@@ -550,6 +567,16 @@ button.inv-id:hover{text-decoration:underline}
 .tab-row .tab.on .tab-n{color:var(--green);background:transparent}
 .tab-row .filter-wrap{margin-left:2px}
 .tab-row .filter-btn{box-shadow:none}
+/* Sort-by options inside the filter popover (invoices) */
+.filter-sorts{display:flex;flex-direction:column;gap:2px}
+.sort-opt{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  border:0;background:transparent;text-align:left;padding:7px 9px;border-radius:7px;
+  font-size:13px;color:var(--ink-2);cursor:pointer;
+}
+.sort-opt:hover{background:var(--line-soft)}
+.sort-opt.on{background:var(--green-soft);color:var(--green);font-weight:600}
+.sort-opt i{font-style:normal;font-family:var(--font-mono);font-size:12px}
 .list-search{
   flex:1;min-width:240px;display:flex;align-items:center;gap:8px;
   background:#fff;border:1px solid var(--line);border-radius:8px;
@@ -622,12 +649,30 @@ button.inv-id:hover{text-decoration:underline}
 .field small{display:block;font-size:11.5px;color:var(--mut-2);margin-top:4px}
 .field textarea{resize:vertical}
 
-.lines{width:100%;border-collapse:collapse;margin-top:4px}
-.lines th{
-  text-align:left;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--mut-2);padding:0 8px 7px;border-bottom:2px solid var(--ink);
+/* Same visual language as the .ledger list tables */
+.lines{
+  width:100%;border-collapse:separate;border-spacing:0;margin-top:4px;
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;
 }
-.lines td{padding:7px 4px;border-bottom:1px solid var(--line-soft)}
+.lines th{
+  text-align:left;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--mut);font-weight:700;padding:11px 8px;
+  background:#F7F8FA;border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.lines td{padding:7px 4px;border-bottom:1px solid var(--line-soft);transition:background .12s}
+.lines tbody tr:last-child td{border-bottom:0}
+.lines tbody tr:hover td{background:color-mix(in srgb,var(--green-soft) 30%,#fff)}
+/* drag-to-reorder grip */
+.lines .drag-cell{width:30px;padding:0 0 0 8px}
+.line-grip{
+  display:grid;place-items:center;width:22px;height:26px;border-radius:6px;
+  color:var(--mut-2);cursor:grab;opacity:0;transition:opacity .12s,background .12s,color .12s;
+}
+.lines tbody tr:hover .line-grip{opacity:1}
+.line-grip:hover{background:var(--line-soft);color:var(--ink)}
+.line-grip:active{cursor:grabbing}
+.lines tr.dragging{opacity:.6}
+.lines tr.dragging td{background:var(--green-soft)}
 .lines input{
   width:100%;border:1px solid transparent;background:transparent;border-radius:7px;
   padding:7px 8px;font-size:13px;outline:none;
@@ -1045,6 +1090,97 @@ button.inv-id:hover{text-decoration:underline}
   box-shadow:0 4px 14px -6px rgba(16,24,40,.2);
 }
 
+/* ============ SHARE INVOICE LINK ============ */
+.share-modal{max-width:520px}
+.share-vis{
+  display:flex;align-items:center;gap:9px;
+  font-size:13px;font-weight:600;color:var(--mut);margin-bottom:10px;
+}
+.share-vis-wrap{position:relative}
+.share-pub{
+  display:inline-flex;align-items:center;gap:6px;border:0;cursor:pointer;
+  background:var(--green-soft);color:var(--green);
+  padding:3px 11px;border-radius:20px;font-size:11.5px;font-weight:700;
+  letter-spacing:.05em;text-transform:uppercase;
+  transition:background .12s;
+}
+.share-pub:hover,.share-pub.open{background:color-mix(in srgb,var(--green) 16%,#fff)}
+.share-pub svg{transition:transform .15s}
+.share-pub.open svg{transform:rotate(180deg)}
+.share-vis-pop{min-width:330px;z-index:60}
+.vis-item{flex-direction:column;align-items:flex-start;gap:3px;padding:11px 12px}
+.vis-item b{font-size:13px;font-weight:700;text-transform:none;letter-spacing:0}
+.vis-item span{font-size:12px;color:var(--mut);line-height:1.5;text-transform:none;letter-spacing:0;font-weight:500}
+.vis-item.active b{color:var(--green)}
+.share-note{font-size:13px;color:var(--mut);line-height:1.55;margin-bottom:16px}
+.share-url{
+  font-family:var(--font-mono);font-size:12px;line-height:1.6;
+  background:var(--green-soft);border:1px solid color-mix(in srgb,var(--green) 22%,transparent);
+  border-radius:10px;padding:12px 14px;margin-top:14px;
+  word-break:break-all;color:var(--ink-2);
+}
+.share-actions{justify-content:flex-start}
+
+/* The public page a shared link opens (no login, no app chrome) */
+.share-page{min-height:100vh;display:flex;flex-direction:column;background:#F3F5F3}
+.share-head{
+  display:flex;align-items:center;gap:14px;padding:13px 26px;
+  background:#fff;border-bottom:1px solid var(--line);
+}
+.share-brand{font-family:var(--font-display);font-weight:800;font-size:17px;letter-spacing:-.01em}
+.share-num{font-family:var(--font-mono);font-size:13px;color:var(--mut)}
+.share-head-right{margin-left:auto}
+.share-stage{flex:1;display:flex;justify-content:center;align-items:flex-start;padding:34px 20px}
+.share-stage .inv-paper{width:100%;max-width:760px}
+.share-loading{width:100%;max-width:760px;display:flex;flex-direction:column;gap:14px}
+.share-loading .skel-bar{display:block}
+.share-err{
+  padding:44px 50px;text-align:center;display:flex;flex-direction:column;gap:8px;
+  align-self:center;
+}
+.share-err b{font-family:var(--font-display);font-size:16px}
+.share-err span{font-size:13.5px;color:var(--mut)}
+.share-foot{text-align:center;padding:16px;color:var(--mut-2);font-size:12px}
+/* Private & Secure email gate */
+.share-gate{
+  align-self:center;width:min(420px,100%);padding:36px 40px;
+  display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;
+}
+.share-gate-ic{
+  width:46px;height:46px;border-radius:14px;display:grid;place-items:center;
+  background:var(--green-soft);color:var(--green);margin-bottom:4px;
+}
+.share-gate b{font-family:var(--font-display);font-size:17px}
+.share-gate-note{font-size:13px;color:var(--mut);line-height:1.55}
+.share-gate input{
+  width:100%;margin-top:8px;padding:10px 13px;border:1px solid var(--line);
+  border-radius:9px;font-size:13.5px;text-align:center;
+}
+.share-gate input:focus{outline:0;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.share-gate-err{font-size:12.5px;color:var(--red);font-weight:600}
+.share-gate .btn{width:100%;justify-content:center;margin-top:4px}
+
+/* ============ ACTIVITY LOG ============ */
+.tab-row .act-filters{margin-left:auto;display:flex;align-items:center;gap:8px}
+.activity-ledger td{vertical-align:top}
+.act-user{font-weight:600;font-size:13px}
+.act-chip{
+  display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;
+  padding:3px 9px;border-radius:20px;white-space:nowrap;
+}
+.act-chip.ok{background:var(--green-soft);color:var(--green)}
+.act-chip.info{background:#EEF2FB;color:#5B6FA8}
+.act-chip.bad{background:#FBEFEC;color:var(--red)}
+.act-chip.brass{background:#FAF4E4;color:var(--brass)}
+.act-chip.mut{background:var(--line-soft);color:var(--mut)}
+.act-details{display:flex;flex-direction:column;gap:2px;min-width:0}
+.act-entity{
+  font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--mut-2);margin-right:7px;
+}
+.act-details b{font-weight:600}
+.act-note{font-size:12.5px;color:var(--mut)}
+
 /* ============ TOAST ============ */
 .toast-stack{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
@@ -1082,6 +1218,9 @@ button.inv-id:hover{text-decoration:underline}
 .cash-strip.five .kpi-ic{width:30px;height:30px;border-radius:9px;top:15px;right:14px}
 .cash-strip.five .kpi-ic svg{width:14px;height:14px}
 .cash-strip.five .lab{padding-right:38px}
+/* Loading state — shimmer bars in place of the KPI label / value / sub. */
+.cash-cell.skel-cell{display:flex;flex-direction:column;justify-content:center;gap:12px}
+.cash-cell.skel-cell .skel-bar{display:block}
 
 .due-text{display:block;font-size:11px;font-weight:600;margin-top:5px;letter-spacing:.02em}
 .due-text.due{color:var(--brass)}
@@ -1131,7 +1270,7 @@ button.inv-id:hover{text-decoration:underline}
 .mini-inv-top .num{font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums}
 .mini-inv-sub{display:flex;gap:5px;font-size:11.5px;color:var(--mut-2);margin-top:3px}
 .mini-inv-status{margin-top:7px}
-.mini-inv-status .stamp{font-size:8.5px;padding:2px 6px}
+.mini-inv-status .stamp{font-size:9px;padding:2px 8px}
 
 .inv-detail{min-width:0}
 .detail-head{display:flex;align-items:flex-end;margin-bottom:14px}
@@ -1168,7 +1307,10 @@ button.inv-id:hover{text-decoration:underline}
 .btn.btn-bar:hover:not(:disabled){background:var(--green-soft);color:var(--green)}
 .btn.btn-bar:disabled{opacity:.45;cursor:not-allowed}
 .btn.btn-bar.strong{color:var(--green)}
-.btn.btn-bar .caret{font-style:normal;font-size:10px;margin-left:2px;color:var(--mut-2)}
+.btn.btn-bar .caret{
+  font-style:normal;display:inline-flex;align-items:center;
+  margin-left:-2px;color:var(--mut-2);
+}
 .detail-head{justify-content:space-between}
 .detail-close{margin-left:auto}
 
@@ -1379,6 +1521,8 @@ button.inv-id:hover{text-decoration:underline}
 /* While html2canvas captures the paper for the PDF, strip decorative chrome
    (perforated tear edge etc.) that doesn't reproduce well as pixels. */
 .pdf-capture::before,.pdf-capture::after{display:none!important}
+/* exported PDFs (bulk export / email attachments) drop the ribbon too */
+.pdf-capture .ribbon{display:none!important}
 
 /* Statement paper: Zoho-style floating "Customize ▾" at the top right —
    always visible so it's discoverable. */
@@ -1459,6 +1603,8 @@ button.inv-id:hover{text-decoration:underline}
 .em-attach b{display:block;font-size:12.5px;color:var(--ink-2)}
 .em-attach span{font-size:11.5px;color:var(--mut-2)}
 .em-attach svg{flex-shrink:0;margin-top:2px;color:var(--green)}
+.em-attach-check{display:flex;align-items:center;margin-top:2px}
+.em-attach-check input{width:15px;height:15px;accent-color:var(--green);cursor:pointer}
 
 /* ---- Date-range picker (ported from Wholesale, Brecx green) ---- */
 .drp{position:relative;display:inline-block}
@@ -1669,6 +1815,12 @@ button.inv-id:hover{text-decoration:underline}
 .imp-preview .ledger th{position:static;box-shadow:none}
 .imp-preview .ledger td{padding:9px 12px;font-size:12.5px}
 .imp-more{font-size:12px;color:var(--mut-2);padding:7px 12px;border-top:1px solid var(--line-soft)}
+.imp-opt{
+  display:flex;gap:10px;align-items:flex-start;margin-top:12px;cursor:pointer;
+  font-size:12.5px;color:var(--mut);line-height:1.5;
+}
+.imp-opt input{width:15px;height:15px;margin-top:2px;flex-shrink:0;accent-color:var(--green);cursor:pointer}
+.imp-opt b{color:var(--ink-2)}
 .imp-progress{display:flex;flex-direction:column;align-items:center;gap:12px;padding:26px 0;color:var(--mut);font-size:13px}
 .imp-fails{list-style:none;font-size:12.5px;color:var(--mut);display:flex;flex-direction:column;gap:5px;margin-bottom:6px}
 .imp-fails b{color:var(--ink)}
@@ -1813,7 +1965,8 @@ button.inv-id:hover{text-decoration:underline}
   color:#F2F7F4;border:1px solid rgba(255,255,255,.14);border-radius:13px;
   padding:9px 9px 9px 15px;display:flex;align-items:center;gap:10px;
   box-shadow:0 22px 46px -10px rgba(15,61,43,.55),0 4px 14px -4px rgba(15,61,43,.4),inset 0 1px 0 rgba(255,255,255,.14);
-  z-index:95;font-size:13px;backdrop-filter:blur(10px);overflow:hidden;
+  /* visible: the Export dropdown opens upward past the bar's edge */
+  z-index:95;font-size:13px;backdrop-filter:blur(10px);overflow:visible;
   animation:bulk-pop .32s cubic-bezier(.32,.72,.5,1);
 }
 .bulk-bar::before{ /* brass ledger-spine ticks, echoes .side::after */
@@ -1876,6 +2029,7 @@ button.inv-id:hover{text-decoration:underline}
 }
 .inv-paper{overflow:hidden}
 .inv-paper .ribbon.paid{background:var(--green)}
+.inv-paper .ribbon.due{background:#3A74C4}
 .inv-paper .ribbon.partial{background:#5B6FA8}
 .inv-paper .ribbon.overdue{background:var(--red)}
 .inv-paper .ribbon.draft{background:var(--mut-2)}
@@ -2339,6 +2493,9 @@ button.inv-id:hover{text-decoration:underline}
 
 /* ============ PRINT — the paper IS the PDF ============ */
 @media print{
+  /* Zero page margin suppresses the browser's own header/footer (URL, date,
+     page numbers) — the papers carry their own margins instead. */
+  @page{margin:0}
   body{background:#fff}
   .side,.topbar,.print-hide,.toast-stack{display:none!important}
   .app{display:block;height:auto;overflow:visible}
@@ -2346,8 +2503,13 @@ button.inv-id:hover{text-decoration:underline}
   .content{overflow:visible;padding:0}
   .detail-grid{display:block}
   .paper-stage{max-width:none}
-  .inv-paper{box-shadow:none;border-radius:0}
+  .inv-paper{box-shadow:none;border-radius:0;padding:14mm 13mm}
   .inv-paper::after{display:none}
+  /* the status ribbon is on-screen chrome — never on the printed document */
+  .inv-paper .ribbon{display:none!important}
+  .stmt-paper{padding:14mm 13mm}
+  .share-stage{padding:0}
+  .share-stage .inv-paper{max-width:none}
   .view{animation:none}
 }
 

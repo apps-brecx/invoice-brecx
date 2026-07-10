@@ -274,6 +274,47 @@ export async function initSchema(): Promise<void> {
     );
   `);
 
+  // Public share links (Zoho "Share Invoice Link") — a tokened, expiring URL
+  // that renders one invoice read-only without a login. Multiple live links
+  // per invoice are allowed; "Disable All Active Links" revokes them.
+  await query(`
+    CREATE TABLE IF NOT EXISTS invoice_share_links (
+      id         BIGSERIAL PRIMARY KEY,
+      invoice_id BIGINT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+      token      TEXT UNIQUE NOT NULL,
+      expires_at DATE NOT NULL,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ
+    );
+  `);
+  await query(
+    `CREATE INDEX IF NOT EXISTS invoice_share_links_invoice_idx ON invoice_share_links (invoice_id);`,
+  );
+  // public → anyone with the link; private → viewer must verify the
+  // customer's email address before the invoice loads.
+  await query(
+    `ALTER TABLE invoice_share_links ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';`,
+  );
+
+  // Audit trail — one row per meaningful action (create/update/delete/status
+  // change/payment) on invoices, customers, items and payments. Rows are
+  // append-only; the actor is denormalized so history survives user deletion.
+  await query(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id           BIGSERIAL PRIMARY KEY,
+      actor        TEXT,
+      action       TEXT NOT NULL,
+      entity       TEXT NOT NULL,
+      entity_id    BIGINT,
+      entity_label TEXT,
+      details      TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS activity_log_created_idx ON activity_log (created_at DESC);`);
+  await query(`CREATE INDEX IF NOT EXISTS activity_log_entity_idx ON activity_log (entity, created_at DESC);`);
+
   // Invoice templates — each row is a full TemplateSettings blob; exactly
   // one is active (used on every invoice + print).
   await query(`

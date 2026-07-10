@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { paymentInputSchema } from "@inv/shared";
 import { pool, query } from "../db.js";
+import { logActivity } from "../lib/activity.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
@@ -29,8 +30,8 @@ const paymentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
-      const inv = await db.query<{ status: string; total: string; paid: string }>(
-        `SELECT i.status, i.total::text,
+      const inv = await db.query<{ status: string; total: string; paid: string; number: string }>(
+        `SELECT i.status, i.number, i.total::text,
                 COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id = i.id), 0)::text AS paid
            FROM invoices i WHERE i.id = $1 FOR UPDATE`,
         [id],
@@ -71,6 +72,15 @@ const paymentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         );
       }
       await db.query("COMMIT");
+      logActivity(req, {
+        action: "payment_recorded",
+        entity: "payment",
+        entityId: inserted.rows[0].id,
+        entityLabel: inv.rows[0].number,
+        details: `$${body.amount.toFixed(2)} via ${body.mode}${
+          nowPaid >= Number(total) - 0.005 ? " — invoice fully paid" : ""
+        }`,
+      });
       return reply.code(201).send({ payment: inserted.rows[0] });
     } catch (err) {
       await db.query("ROLLBACK");
@@ -86,8 +96,8 @@ const paymentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
-      const { rows } = await db.query<{ invoice_id: number }>(
-        `DELETE FROM payments WHERE id = $1 RETURNING invoice_id`,
+      const { rows } = await db.query<{ invoice_id: number; amount: string }>(
+        `DELETE FROM payments WHERE id = $1 RETURNING invoice_id, amount`,
         [id],
       );
       if (!rows[0]) {
@@ -103,6 +113,17 @@ const paymentsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         [rows[0].invoice_id],
       );
       await db.query("COMMIT");
+      const inv = await query<{ number: string }>(
+        `SELECT number FROM invoices WHERE id = $1`,
+        [rows[0].invoice_id],
+      );
+      logActivity(req, {
+        action: "payment_removed",
+        entity: "payment",
+        entityId: id,
+        entityLabel: inv.rows[0]?.number ?? null,
+        details: `$${Number(rows[0].amount).toFixed(2)} removed — invoice re-opened for the amount`,
+      });
       return { ok: true };
     } catch (err) {
       await db.query("ROLLBACK");

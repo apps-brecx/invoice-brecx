@@ -7,6 +7,7 @@ import {
   type InvoiceInput,
 } from "@inv/shared";
 import { pool, query } from "../db.js";
+import { logActivity } from "../lib/activity.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
@@ -171,6 +172,13 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       await db.query("COMMIT");
       const { rows } = await query(`SELECT * FROM (${ENRICHED}) t WHERE t.id = $1`, [invoiceId]);
+      logActivity(req, {
+        action: "created",
+        entity: "invoice",
+        entityId: invoiceId,
+        entityLabel: rows[0].number,
+        details: `Draft for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}`,
+      });
       return reply.code(201).send({ invoice: rows[0] });
     } catch (err) {
       await db.query("ROLLBACK");
@@ -229,6 +237,13 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
       await db.query("COMMIT");
       const { rows } = await query(`SELECT * FROM (${ENRICHED}) t WHERE t.id = $1`, [id]);
+      logActivity(req, {
+        action: "updated",
+        entity: "invoice",
+        entityId: id,
+        entityLabel: rows[0].number,
+        details: `Draft edited for ${rows[0].client_name} · total $${Number(rows[0].total).toFixed(2)}`,
+      });
       return { invoice: rows[0] };
     } catch (err) {
       await db.query("ROLLBACK");
@@ -255,13 +270,24 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     );
     if (!rows[0]) return reply.code(404).send({ error: "Invoice not found." });
     const enriched = await query(`SELECT * FROM (${ENRICHED}) t WHERE t.id = $1`, [id]);
+    logActivity(req, {
+      action:
+        status === "sent" ? "marked_sent" : status === "void" ? "voided" : "status_changed",
+      entity: "invoice",
+      entityId: id,
+      entityLabel: enriched.rows[0].number,
+      details:
+        status === "sent"
+          ? `Sent to ${enriched.rows[0].client_name}`
+          : `Status changed to ${status}`,
+    });
     return { invoice: enriched.rows[0] };
   });
 
   app.delete("/invoices/:id", { preHandler: app.requireAuth }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
-    const existing = await query<{ status: string }>(
-      `SELECT status FROM invoices WHERE id = $1`,
+    const existing = await query<{ status: string; number: string }>(
+      `SELECT status, number FROM invoices WHERE id = $1`,
       [id],
     );
     if (!existing.rows[0]) return reply.code(404).send({ error: "Invoice not found." });
@@ -269,6 +295,13 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return reply.code(409).send({ error: "Only draft invoices can be deleted — void it instead." });
     }
     await query(`DELETE FROM invoices WHERE id = $1`, [id]);
+    logActivity(req, {
+      action: "deleted",
+      entity: "invoice",
+      entityId: id,
+      entityLabel: existing.rows[0].number,
+      details: "Draft deleted",
+    });
     return { ok: true };
   });
 };

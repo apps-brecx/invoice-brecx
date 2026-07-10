@@ -15,45 +15,45 @@ const cp = (salutation: string, firstName: string, lastName: string, email: stri
 const DATA: Array<{ name: string; email: string; phone: string; persons: object[] }> = [
   {
     name: "Home Goods DC #890",
-    email: "ap890@homegoods.com",
+    email: "ap890@example.com",
     phone: "+1 817-551-0290",
-    persons: [cp("Ms.", "Karen", "Whitfield", "karen.w@homegoods.com", "+1 817-551-0291")],
+    persons: [cp("Ms.", "Karen", "Whitfield", "karen.w@example.com", "+1 817-551-0291")],
   },
   {
     name: "Home Goods DC #887",
-    email: "ap887@homegoods.com",
+    email: "ap887@example.com",
     phone: "+1 513-651-0287",
     persons: [],
   },
   {
     name: "Home Goods DC #886",
-    email: "ap886@homegoods.com",
+    email: "ap886@example.com",
     phone: "+1 412-829-0286",
     persons: [],
   },
   {
     name: "Zv Partners BV",
-    email: "kais@zvpartners.be",
+    email: "kais@example.com",
     phone: "+32 493 84 04 57",
-    persons: [cp("Mr.", "Kaïs", "Zahaf", "kais@zvpartners.be", "+32 493 84 04 57")],
+    persons: [cp("Mr.", "Kaïs", "Zahaf", "kais@example.com", "+32 493 84 04 57")],
   },
   {
     name: "Money or Honey, LLC",
-    email: "orders@moneyorhoney.com",
+    email: "orders@example.com",
     phone: "+1 212-683-1122",
-    persons: [cp("Mrs.", "Dana", "Kessler", "dana@moneyorhoney.com", "+1 212-683-1123")],
+    persons: [cp("Mrs.", "Dana", "Kessler", "dana@example.com", "+1 212-683-1123")],
   },
   {
     name: "Win Depot, Inc.",
-    email: "purchasing@windepot.com",
+    email: "purchasing@example.com",
     phone: "+1 718-472-5500",
     persons: [],
   },
   {
     name: "Gabe's",
-    email: "GabrielAP@gabes.net",
+    email: "GabrielAP@example.com",
     phone: "+1 304-292-6965",
-    persons: [cp("Mr.", "Gabriel", "Stone", "GabrielAP@gabes.net", "+1 304-292-6966")],
+    persons: [cp("Mr.", "Gabriel", "Stone", "GabrielAP@example.com", "+1 304-292-6966")],
   },
 ];
 

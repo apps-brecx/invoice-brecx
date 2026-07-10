@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { useBilling, money, type Customer, type Item } from "../../lib/store";
 import { useTemplate } from "../../lib/template";
 import { usePaymentTerms, dueDateFor } from "../../lib/terms";
+import { ActionIcon } from "../../components/bits";
 import { useToast } from "../../components/Toast";
 import { AddCustomerModal } from "../../components/CustomerModal";
 import { CustomerPicker } from "../../components/CustomerPicker";
@@ -12,6 +13,7 @@ import { DatePicker } from "../../components/DatePicker";
 import { ItemSelect } from "../../components/ItemSelect";
 import { NewItemModal } from "../../components/ItemModal";
 import { BulkItemsModal } from "../../components/BulkItemsModal";
+import { ImportInvoicesModal } from "../../components/ImportInvoicesModal";
 import { NewTermModal } from "../../components/TermModal";
 import { CustomizeDrawer } from "../../components/CustomizeDrawer";
 
@@ -72,6 +74,8 @@ export function CreateInvoice() {
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [customizing, setCustomizing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importedRef = useRef(0);
   const sendMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -162,6 +166,19 @@ export function CreateInvoice() {
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((cur) => cur.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  // Drag-to-reorder: the grip arms the row, then the list live-reorders as
+  // the drag passes over other rows (Zoho-style).
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragArmed, setDragArmed] = useState<number | null>(null);
+  function moveLine(from: number, to: number) {
+    setLines((cur) => {
+      const next = [...cur];
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
   }
 
   function applyItem(i: number, item: Item) {
@@ -314,6 +331,11 @@ export function CreateInvoice() {
           <p>{editing ? "Editing a draft — nothing is sent until you say so." : "Fill it in — the number is assigned on save."}</p>
         </div>
         <div className="right">
+          {!editing && (
+            <button type="button" className="btn btn-ghost" onClick={() => setImporting(true)}>
+              <ActionIcon name="upload" /> Import Invoices
+            </button>
+          )}
           <button className="btn btn-ghost" onClick={() => setCustomizing(true)}>
             ⚙ Customize invoice
           </button>
@@ -379,6 +401,7 @@ export function CreateInvoice() {
           <table className="lines">
             <thead>
               <tr>
+                <th className="drag-cell" aria-label="Reorder" />
                 <th style={{ width: extraCols.length > 0 ? "36%" : "48%" }}>
                   {colLabel("description", "Item details")}
                 </th>
@@ -393,7 +416,44 @@ export function CreateInvoice() {
             </thead>
             <tbody>
               {lines.map((l, i) => (
-                <tr key={i}>
+                <tr
+                  key={i}
+                  className={dragIdx === i ? "dragging" : undefined}
+                  draggable={dragArmed === i}
+                  onDragStart={(e) => {
+                    setDragIdx(i);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(e) => {
+                    if (dragIdx === null) return;
+                    e.preventDefault();
+                    if (dragIdx !== i) {
+                      moveLine(dragIdx, i);
+                      setDragIdx(i);
+                    }
+                  }}
+                  onDragEnd={() => {
+                    setDragIdx(null);
+                    setDragArmed(null);
+                  }}
+                >
+                  <td className="drag-cell">
+                    <span
+                      className="line-grip"
+                      title="Drag to reorder"
+                      onMouseDown={() => setDragArmed(i)}
+                      onMouseUp={() => setDragArmed(null)}
+                    >
+                      <svg width="9" height="15" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
+                        <circle cx="2.5" cy="2.5" r="1.4" />
+                        <circle cx="7.5" cy="2.5" r="1.4" />
+                        <circle cx="2.5" cy="8" r="1.4" />
+                        <circle cx="7.5" cy="8" r="1.4" />
+                        <circle cx="2.5" cy="13.5" r="1.4" />
+                        <circle cx="7.5" cy="13.5" r="1.4" />
+                      </svg>
+                    </span>
+                  </td>
                   <td>
                     <ItemSelect
                       items={items.filter((it) => it.active)}
@@ -585,7 +645,7 @@ export function CreateInvoice() {
                 aria-expanded={sendMenuOpen}
                 onClick={() => setSendMenuOpen((o) => !o)}
               >
-                ▴
+                <ActionIcon name="chevronUp" size={13} />
               </button>
               {sendMenuOpen && (
                 <div className="menu-pop up" role="menu">
@@ -674,6 +734,22 @@ export function CreateInvoice() {
       )}
 
       {customizing && <CustomizeDrawer onClose={() => setCustomizing(false)} />}
+
+      {importing && (
+        <ImportInvoicesModal
+          customers={customers}
+          onClose={() => {
+            setImporting(false);
+            // Anything imported → land on the list where the new rows are.
+            if (importedRef.current > 0) navigate("/invoices");
+          }}
+          onImported={async (ok) => {
+            importedRef.current = ok;
+            await refresh();
+            toast(`${ok} invoice${ok === 1 ? "" : "s"} imported`);
+          }}
+        />
+      )}
 
       {scheduling && (
         <SendLaterModal

@@ -21,10 +21,13 @@ export function Menu({
   trigger,
   items,
   align = "left",
+  up = false,
 }: {
   trigger: ReactNode;
   items: MenuItem[];
   align?: "left" | "right";
+  /** Opens the pop above the trigger (e.g. from the floating bulk bar). */
+  up?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -51,7 +54,7 @@ export function Menu({
         {trigger}
       </span>
       {open && (
-        <div className={"menu-pop" + (align === "right" ? " right" : "")}>
+        <div className={"menu-pop" + (align === "right" ? " right" : "") + (up ? " up" : "")}>
           {items.map((it, i) =>
             it.sep ? (
               <div className="menu-sep" key={i} />

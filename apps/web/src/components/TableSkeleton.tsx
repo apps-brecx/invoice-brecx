@@ -14,6 +14,11 @@ export function DetailSkeleton() {
             <span className="skel-bar" style={{ width: "17%" }} />
           </div>
         ))}
+        <div className="skel-mini-foot">
+          <span className="skel-bar" />
+          <span className="skel-bar" />
+          <span className="skel-bar" />
+        </div>
       </aside>
       <div className="skel-main">
         <div className="skel-head">
@@ -30,6 +35,52 @@ export function DetailSkeleton() {
         </div>
       </div>
     </section>
+  );
+}
+
+/** Invoice-paper-shaped shimmer for the detail pane — shown while a single
+ *  invoice loads (e.g. switching invoices in the mini list). */
+export function PaperSkeleton() {
+  return (
+    <div className="paper-skel" aria-hidden="true">
+      <div className="skel-head">
+        <span className="skel-bar" style={{ width: 210, height: 20 }} />
+        <span className="skel-bar" style={{ width: 300 }} />
+      </div>
+      <span className="skel-bar" style={{ height: 46, borderRadius: 12 }} />
+      <div className="card paper-skel-paper">
+        <div className="psk-top">
+          <span className="skel-bar" style={{ width: 140, height: 28 }} />
+          <span className="skel-bar" style={{ width: 96, height: 16 }} />
+        </div>
+        <div className="psk-cols">
+          <div>
+            <span className="skel-bar" style={{ width: "58%" }} />
+            <span className="skel-bar" style={{ width: "42%" }} />
+            <span className="skel-bar" style={{ width: "50%" }} />
+            <span className="skel-bar" style={{ width: "30%" }} />
+          </div>
+          <div className="psk-right">
+            <span className="skel-bar" style={{ width: 150, height: 22 }} />
+            <span className="skel-bar" style={{ width: 170 }} />
+            <span className="skel-bar" style={{ width: 140 }} />
+            <span className="skel-bar" style={{ width: 160 }} />
+          </div>
+        </div>
+        <span className="skel-bar" style={{ height: 30 }} />
+        {Array.from({ length: 3 }, (_, i) => (
+          <div className="psk-row" key={i}>
+            <span className="skel-bar" style={{ width: `${44 + ((i * 17) % 22)}%` }} />
+            <span className="skel-bar" style={{ width: "9%", marginLeft: "auto" }} />
+            <span className="skel-bar" style={{ width: "11%" }} />
+          </div>
+        ))}
+        <div className="psk-tot">
+          <span className="skel-bar" style={{ width: 190 }} />
+          <span className="skel-bar" style={{ width: 220, height: 16 }} />
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -12,11 +12,19 @@ import {
 } from "../../lib/store";
 import { useTemplate } from "../../lib/template";
 import { InvoicePaper, type PaperData } from "../../components/InvoicePaper";
-import { Stamp, DueText } from "../../components/bits";
+import { Stamp, DueText, ActionIcon } from "../../components/bits";
 import { DatePicker } from "../../components/DatePicker";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { Menu } from "../../components/Menu";
+import { ShareInvoiceModal } from "../../components/ShareInvoiceModal";
+import { InvoiceEmailModal } from "../../components/InvoiceEmailModal";
+import { Pagination } from "../../components/Pagination";
+import { DetailSkeleton, PaperSkeleton } from "../../components/TableSkeleton";
 import { useToast } from "../../components/Toast";
+import { exportInvoicesPdf } from "../../lib/invoicePdf";
+import { downloadCsv } from "../Dashboard/Dashboard";
+
+const MINI_PAGE = 15;
 
 interface DetailItem {
   id: number;
@@ -47,13 +55,16 @@ export function InvoiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { customers, invoices, refresh } = useBilling();
+  const { customers, invoices, refresh, loading } = useBilling();
   const { template } = useTemplate();
 
   const [detail, setDetail] = useState<Detail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [emailing, setEmailing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [confirm, setConfirm] = useState<
     | { kind: "delete" }
     | { kind: "void" }
@@ -61,6 +72,35 @@ export function InvoiceDetail() {
     | null
   >(null);
   const [params, setParams] = useSearchParams();
+
+  // Mini-list: search + paging + bulk selection (mirrors the full list view).
+  const [miniQ, setMiniQ] = useState("");
+  const [miniPage, setMiniPage] = useState(1);
+  const [sel, setSel] = useState<Set<number>>(new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
+  const mq = miniQ.trim().toLowerCase();
+  const miniRows = invoices.filter(
+    (i) =>
+      !mq ||
+      i.number.toLowerCase().includes(mq) ||
+      i.customerName.toLowerCase().includes(mq),
+  );
+  const miniPages = Math.max(1, Math.ceil(miniRows.length / MINI_PAGE));
+  const safeMiniPage = Math.min(miniPage, miniPages);
+  const pageRows = miniRows.slice((safeMiniPage - 1) * MINI_PAGE, safeMiniPage * MINI_PAGE);
+  const allChecked = pageRows.length > 0 && pageRows.every((r) => sel.has(r.dbId));
+  const toggleAll = () =>
+    setSel(allChecked ? new Set() : new Set(pageRows.map((r) => r.dbId)));
+  const toggleOne = (rowId: number) =>
+    setSel((cur) => {
+      const next = new Set(cur);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  useEffect(() => {
+    setMiniPage(1);
+  }, [mq]);
 
   // "Save and Print" lands here with ?print=1 — print once the paper is up.
   useEffect(() => {
@@ -106,6 +146,10 @@ export function InvoiceDetail() {
       </section>
     );
   }
+
+  // On a hard refresh the store is still loading — skeleton, not an empty
+  // mini list with a lone spinner.
+  if (!detail && loading) return <DetailSkeleton />;
 
   const inv = detail?.invoice;
 
@@ -180,12 +224,85 @@ export function InvoiceDetail() {
       /* eslint-enable @typescript-eslint/no-explicit-any */
     }, "Invoice cloned as a new draft");
 
-  const shareLink = async () => {
-    await navigator.clipboard.writeText(window.location.href);
-    toast("Invoice link copied to clipboard");
-  };
+  // Bulk operations over the mini-list selection (same as the invoices list).
+  const selDrafts = invoices.filter((i) => sel.has(i.dbId) && i.status === "draft");
+
+  const bulkMarkSent = () =>
+    act(async () => {
+      for (const d of selDrafts) {
+        await api.patch(`/invoices/${d.dbId}/status`, { status: "sent" });
+      }
+      setSel(new Set());
+    }, `${selDrafts.length} invoice${selDrafts.length === 1 ? "" : "s"} marked as sent`);
+
+  function bulkExportCsv() {
+    const list = invoices.filter((i) => sel.has(i.dbId));
+    downloadCsv("brecx-invoices.csv", [
+      ["No.", "Order number", "Customer", "Status", "Issued", "Due", "Amount", "Balance"],
+      ...list.map((i) => [
+        i.number,
+        i.orderNumber ?? "",
+        i.customerName,
+        i.status,
+        i.issued,
+        i.due,
+        i.total.toFixed(2),
+        i.status === "draft" ? "" : i.balance.toFixed(2),
+      ]),
+    ]);
+    toast(`Exported ${list.length} invoice${list.length === 1 ? "" : "s"} as CSV`);
+  }
+
+  async function bulkDelete() {
+    setBusy(true);
+    const goHome = id ? sel.has(Number(id)) && inv?.status === "draft" : false;
+    let ok = 0;
+    let failed = 0;
+    for (const s of sel) {
+      try {
+        await api.del(`/invoices/${s}`);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setSel(new Set());
+    if (goHome) {
+      await refresh();
+      setBusy(false);
+      navigate("/invoices");
+    } else {
+      await Promise.all([load(), refresh()]);
+      setBusy(false);
+    }
+    if (failed > 0) {
+      toast(`${ok} deleted — ${failed} skipped (only drafts can be deleted)`, "error");
+    } else {
+      toast(`${ok} draft${ok === 1 ? "" : "s"} deleted`);
+    }
+  }
+
+
+  // Direct download through the same pixel-perfect pipeline as bulk export —
+  // no print dialog detour.
+  async function downloadPdf() {
+    if (pdfBusy || !inv) return;
+    setPdfBusy(true);
+    try {
+      await exportInvoicesPdf([inv.dbId], template);
+      toast(`${inv.number}.pdf downloaded`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not generate the PDF", "error");
+    } finally {
+      setPdfBusy(false);
+    }
+  }
 
   const customer = inv ? customerOf(customers, inv.customerId) : null;
+  // The compose modal needs the REAL customer record (email, name) — the
+  // customerOf fallback would prefill "Dear Unknown" with an empty To while
+  // the store is still loading.
+  const emailCustomer = inv ? customers.find((c) => c.id === inv.customerId) ?? null : null;
 
   const paper: PaperData | null =
     inv && detail
@@ -242,15 +359,50 @@ export function InvoiceDetail() {
             All Invoices
           </button>
         </div>
+        <div className="mini-tools">
+          <input
+            type="checkbox"
+            className="mini-check"
+            title="Select all on this page"
+            checked={allChecked}
+            onChange={toggleAll}
+          />
+          <label className="list-search mini-search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              value={miniQ}
+              onChange={(e) => setMiniQ(e.target.value)}
+              placeholder="Search invoices…"
+            />
+            {miniQ && (
+              <button type="button" className="ls-clear" aria-label="Clear search" onClick={() => setMiniQ("")}>
+                ✕
+              </button>
+            )}
+          </label>
+        </div>
         <div className="mini-list-body">
-          {invoices.map((row) => (
-            <button
+          {pageRows.map((row) => (
+            <div
               key={row.dbId}
+              role="button"
+              tabIndex={0}
               className={"mini-inv" + (String(row.dbId) === id ? " on" : "")}
               onClick={() => navigate(`/invoices/${row.dbId}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") navigate(`/invoices/${row.dbId}`);
+              }}
             >
-              {/* .mini-inv is a flex ROW (checkbox + body on other pages) —
-                  everything must sit inside .mini-inv-main to stack. */}
+              <input
+                type="checkbox"
+                className="mini-check"
+                checked={sel.has(row.dbId)}
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => toggleOne(row.dbId)}
+              />
               <div className="mini-inv-main">
                 <div className="mini-inv-top">
                   <b>{row.customerName}</b>
@@ -264,22 +416,73 @@ export function InvoiceDetail() {
                   <Stamp status={row.status} />
                 </div>
               </div>
-            </button>
-          ))}
-          {invoices.length === 0 && (
-            <div className="empty-note">
-              <b>No invoices yet</b>
             </div>
-          )}
+          ))}
+          {miniRows.length === 0 &&
+            (loading ? (
+              // Store still refreshing (e.g. detail fetch won the race) —
+              // shimmer instead of a misleading "No invoices yet".
+              Array.from({ length: 8 }, (_, i) => (
+                <div className="skel-mini-row" key={i} aria-hidden="true">
+                  <span className="skel-bar" style={{ width: `${42 + ((i * 13) % 34)}%` }} />
+                  <span className="skel-bar" style={{ width: "17%" }} />
+                </div>
+              ))
+            ) : (
+              <div className="empty-note">
+                <b>{invoices.length === 0 ? "No invoices yet" : "No matches"}</b>
+              </div>
+            ))}
         </div>
+        {miniPages > 1 && (
+          <div className="mini-foot">
+            <Pagination page={safeMiniPage} pages={miniPages} onPage={setMiniPage} />
+          </div>
+        )}
       </aside>
+
+      {sel.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-count">
+            <strong>{sel.size}</strong> selected
+          </span>
+          <div className="bulk-actions">
+            <button
+              className="bb-btn"
+              disabled={busy || selDrafts.length === 0}
+              title={selDrafts.length === 0 ? "Only drafts can be marked as sent" : undefined}
+              onClick={() => void bulkMarkSent()}
+            >
+              Mark as Sent
+            </button>
+            <button className="bb-btn" disabled={busy} onClick={bulkExportCsv}>
+              Export CSV
+            </button>
+            <button
+              className="bb-btn danger bb-icon"
+              disabled={busy}
+              title="Delete selected"
+              aria-label="Delete selected"
+              onClick={() => setConfirmBulk(true)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                <path d="M19 6l-.8 13.2A2 2 0 0 1 16.2 21H7.8a2 2 0 0 1-2-1.8L5 6" />
+                <path d="M10 11v5M14 11v5" />
+              </svg>
+            </button>
+          </div>
+          <button className="bb-close" aria-label="Clear selection" onClick={() => setSel(new Set())}>
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* right: the document */}
       <div className="inv-detail">
         {!inv || !paper ? (
-          <div className="center-fill">
-            <div className="spinner" />
-          </div>
+          <PaperSkeleton />
         ) : (
           <>
             <div className="detail-head print-hide">
@@ -290,13 +493,6 @@ export function InvoiceDetail() {
                   <DueText status={inv.status} dueInDays={inv.dueInDays} />
                 </p>
               </div>
-              <button
-                className="icon-btn detail-close"
-                title="Back to the invoice list"
-                onClick={() => navigate("/invoices")}
-              >
-                ✕
-              </button>
             </div>
 
             {/* Zoho-style action bar: Edit · Send ▾ · Share · PDF/Print ▾ · Record Payment · ⋯ */}
@@ -307,68 +503,76 @@ export function InvoiceDetail() {
                 title={inv.status !== "draft" ? "Only drafts can be edited" : undefined}
                 onClick={() => navigate(`/invoices/${inv.dbId}/edit`)}
               >
-                ✎ Edit
+                <ActionIcon name="pencil" /> Edit
               </button>
               <Menu
                 trigger={
                   <button className="btn btn-bar" disabled={busy}>
-                    ✉ Send <i className="caret">▾</i>
+                    <ActionIcon name="send" /> Send{" "}
+                    <i className="caret">
+                      <ActionIcon name="chevron" size={12} />
+                    </i>
                   </button>
                 }
                 items={[
                   {
-                    icon: "✉",
+                    icon: <ActionIcon name="mail" />,
                     label: "Send Email",
-                    disabled: inv.status !== "draft",
-                    title:
-                      inv.status !== "draft"
-                        ? "Already sent"
-                        : "Marks the invoice as sent (real email goes out once the email module ships)",
-                    onClick: markSent,
+                    title: "Compose and email this invoice to the customer",
+                    onClick: () => setEmailing(true),
                   },
-                  { icon: "◎", label: "WhatsApp Message", disabled: true, title: "Coming later" },
-                  { icon: "🕓", label: "Schedule Email", disabled: true, title: "Coming with the email module" },
+                  { icon: <ActionIcon name="chat" />, label: "WhatsApp Message", disabled: true, title: "Coming later" },
+                  { icon: <ActionIcon name="clock" />, label: "Schedule Email", disabled: true, title: "Coming with the email module" },
                 ]}
               />
-              <button className="btn btn-bar" onClick={() => void shareLink()}>
-                ⇗ Share
+              <button className="btn btn-bar" onClick={() => setSharing(true)}>
+                <ActionIcon name="share" /> Share
               </button>
               <Menu
                 trigger={
                   <button className="btn btn-bar">
-                    ⎙ PDF/Print <i className="caret">▾</i>
+                    <ActionIcon name="printer" /> PDF/Print{" "}
+                    <i className="caret">
+                      <ActionIcon name="chevron" size={12} />
+                    </i>
                   </button>
                 }
                 items={[
-                  { icon: "⤓", label: "PDF", onClick: () => window.print(), title: "Print dialog → Save as PDF" },
-                  { icon: "⎙", label: "Print", onClick: () => window.print() },
+                  {
+                    icon: <ActionIcon name="download" />,
+                    label: pdfBusy ? "Preparing PDF…" : "PDF",
+                    disabled: pdfBusy,
+                    title: "Download as PDF",
+                    onClick: () => void downloadPdf(),
+                  },
+                  { icon: <ActionIcon name="printer" />, label: "Print", onClick: () => window.print() },
                   { sep: true },
-                  { icon: "⎙", label: "Print Delivery Note", disabled: true, title: "Coming later" },
-                  { icon: "⎙", label: "Print Packing Slip", disabled: true, title: "Coming later" },
+                  { icon: <ActionIcon name="printer" />, label: "Print Delivery Note", disabled: true, title: "Coming later" },
+                  { icon: <ActionIcon name="printer" />, label: "Print Packing Slip", disabled: true, title: "Coming later" },
                 ]}
               />
               {(inv.status === "due" || inv.status === "partial" || inv.status === "overdue") && (
                 <button className="btn btn-bar strong" disabled={busy} onClick={() => setPaying(true)}>
-                  ◉ Record Payment
+                  <ActionIcon name="payment" /> Record Payment
                 </button>
               )}
               <Menu
                 align="right"
                 trigger={
-                  <button className="btn btn-bar" disabled={busy}>
-                    ⋯
+                  <button className="btn btn-bar" disabled={busy} aria-label="More actions">
+                    <ActionIcon name="more" size={17} />
                   </button>
                 }
                 items={[
                   {
-                    icon: "✉",
+                    icon: <ActionIcon name="mailCheck" />,
                     label: "Mark As Sent",
                     disabled: inv.status !== "draft",
                     onClick: markSent,
                   },
-                  { icon: "⧉", label: "Clone", onClick: () => void cloneInvoice() },
+                  { icon: <ActionIcon name="copy" />, label: "Clone", onClick: () => void cloneInvoice() },
                   {
-                    icon: "⊘",
+                    icon: <ActionIcon name="ban" />,
                     label: "Void",
                     disabled: inv.status === "draft" || inv.status === "void" || inv.paid > 0,
                     title:
@@ -380,7 +584,7 @@ export function InvoiceDetail() {
                     onClick: () => setConfirm({ kind: "void" }),
                   },
                   {
-                    icon: "🗑",
+                    icon: <ActionIcon name="trash" />,
                     label: "Delete",
                     danger: true,
                     disabled: inv.status !== "draft",
@@ -389,7 +593,7 @@ export function InvoiceDetail() {
                   },
                   { sep: true },
                   {
-                    icon: "⚙",
+                    icon: <ActionIcon name="sliders" />,
                     label: "Customize Template",
                     onClick: () => navigate("/settings/template"),
                   },
@@ -412,7 +616,7 @@ export function InvoiceDetail() {
                   )}
                 </span>
                 <span className="next-actions">
-                  <button className="btn btn-primary" disabled={busy} onClick={markSent}>
+                  <button className="btn btn-primary" disabled={busy} onClick={() => setEmailing(true)}>
                     Send Invoice
                   </button>
                   <button className="btn btn-ghost" disabled={busy} onClick={markSent}>
@@ -529,6 +733,38 @@ export function InvoiceDetail() {
             else void removePayment(c.pid);
           }}
           onClose={() => setConfirm(null)}
+        />
+      )}
+
+      {confirmBulk && (
+        <ConfirmModal
+          title={`Delete ${sel.size} invoice${sel.size === 1 ? "" : "s"}?`}
+          message={
+            <>
+              Selected draft{sel.size === 1 ? "" : "s"} will be permanently deleted. Sent or
+              paid invoices are skipped — void those instead.
+            </>
+          }
+          confirmLabel="Yes, delete"
+          onConfirm={() => {
+            setConfirmBulk(false);
+            void bulkDelete();
+          }}
+          onClose={() => setConfirmBulk(false)}
+        />
+      )}
+
+      {sharing && inv && <ShareInvoiceModal invoice={inv} onClose={() => setSharing(false)} />}
+
+      {emailing && inv && emailCustomer && (
+        <InvoiceEmailModal
+          invoice={inv}
+          customer={emailCustomer}
+          template={template}
+          onDone={async () => {
+            await Promise.all([load(), refresh()]);
+          }}
+          onClose={() => setEmailing(false)}
         />
       )}
 

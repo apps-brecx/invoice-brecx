@@ -19,6 +19,9 @@ import settingsRoutes from "./routes/settings.js";
 import itemsRoutes from "./routes/items.js";
 import templatesRoutes from "./routes/templates.js";
 import reportsRoutes from "./routes/reports.js";
+import activityRoutes from "./routes/activity.js";
+import shareRoutes from "./routes/share.js";
+import invoiceEmailRoutes from "./routes/invoiceEmail.js";
 
 const app = Fastify({ logger, trustProxy: true });
 
@@ -59,6 +62,9 @@ const api: FastifyPluginAsync = async (instance: FastifyInstance) => {
   await instance.register(itemsRoutes);
   await instance.register(templatesRoutes);
   await instance.register(reportsRoutes);
+  await instance.register(activityRoutes);
+  await instance.register(shareRoutes);
+  await instance.register(invoiceEmailRoutes);
 };
 await app.register(api, { prefix: "/api" });
 

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { itemInputSchema } from "@inv/shared";
 import { query } from "../db.js";
+import { logActivity } from "../lib/activity.js";
 import { IMAGE_MIMES, saveItemImage, readItemImage, deleteItemImage } from "../lib/storage.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -33,6 +34,13 @@ const itemsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [body.name, body.type, body.unit || null, body.sellingPrice, body.description || null, by],
     );
+    logActivity(req, {
+      action: "created",
+      entity: "item",
+      entityId: rows[0].id,
+      entityLabel: body.name,
+      details: `${body.type} · rate $${body.sellingPrice.toFixed(2)}`,
+    });
     return reply.code(201).send({ item: rows[0] });
   });
 
@@ -47,14 +55,27 @@ const itemsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       [body.name, body.type, body.unit || null, body.sellingPrice, body.description || null, by, id],
     );
     if (!rows[0]) return reply.code(404).send({ error: "Item not found." });
+    logActivity(req, {
+      action: "updated",
+      entity: "item",
+      entityId: id,
+      entityLabel: body.name,
+      details: `Item details edited · rate $${body.sellingPrice.toFixed(2)}`,
+    });
     return { item: rows[0] };
   });
 
   app.delete("/items/:id", { preHandler: app.requireAuth }, async (req, reply) => {
     const { id } = idParam.parse(req.params);
-    const { rows } = await query(`DELETE FROM items WHERE id = $1 RETURNING image_key`, [id]);
+    const { rows } = await query(`DELETE FROM items WHERE id = $1 RETURNING name, image_key`, [id]);
     if (!rows[0]) return reply.code(404).send({ error: "Item not found." });
     deleteItemImage(rows[0].image_key);
+    logActivity(req, {
+      action: "deleted",
+      entity: "item",
+      entityId: id,
+      entityLabel: rows[0].name,
+    });
     return { ok: true };
   });
 
@@ -126,6 +147,12 @@ const itemsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       [active, by, id],
     );
     if (!rows[0]) return reply.code(404).send({ error: "Item not found." });
+    logActivity(req, {
+      action: active ? "marked_active" : "marked_inactive",
+      entity: "item",
+      entityId: id,
+      entityLabel: rows[0].name,
+    });
     return { item: rows[0] };
   });
 
