@@ -3,8 +3,9 @@ import { GeneralTab } from "./GeneralTab";
 import { SecurityTab } from "./SecurityTab";
 import { UsersTab } from "./UsersTab";
 import { AiTab } from "./AiTab";
+import { NotificationsTab } from "./NotificationsTab";
 
-const TABS = ["general", "security", "users", "ai"] as const;
+const TABS = ["general", "security", "notifications", "users", "ai"] as const;
 export type SettingsTab = (typeof TABS)[number];
 
 /* Priceobo-style settings: slim sub-nav on the left (grouped Personal /
@@ -33,6 +34,12 @@ function NavIcon({ name }: { name: string }) {
     ),
     ai: (
       <path d="M12 2.5c.5 4.8 2.2 6.5 7 7-4.8.5-6.5 2.2-7 7-.5-4.8-2.2-6.5-7-7 4.8-.5 6.5-2.2 7-7Z" />
+    ),
+    notifications: (
+      <>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+      </>
     ),
   };
   return (
@@ -76,6 +83,7 @@ export function Settings() {
           <div className="sn-label">Personal</div>
           {item("general", "General")}
           {item("security", "Security")}
+          {item("notifications", "Notifications")}
           <div className="sn-label">Workspace</div>
           {item("users", "Users")}
           {item("ai", "Claude AI")}
@@ -84,6 +92,7 @@ export function Settings() {
         <div className="set-body">
           {active === "general" && <GeneralTab />}
           {active === "security" && <SecurityTab />}
+          {active === "notifications" && <NotificationsTab />}
           {active === "users" && <UsersTab />}
           {active === "ai" && <AiTab />}
         </div>

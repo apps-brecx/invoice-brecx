@@ -1,45 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { useBilling, initialsOf, money, type Invoice } from "../lib/store";
+import { useBilling, initialsOf } from "../lib/store";
+import { buildNotifs, useNotifRead, type Notif } from "../lib/notifications";
 import { Tooltip } from "./Tooltip";
-
-interface Notif {
-  id: string;
-  tone: "crit" | "warn" | "info";
-  title: string;
-  time: string;
-  dbId: number;
-}
-
-/** Notifications are derived live from real invoice data — anything still
- *  owed becomes an activity entry, most-overdue first. No fake data. */
-function buildNotifs(invoices: Invoice[]): Notif[] {
-  return invoices
-    .filter((i) => i.balance > 0 && i.status !== "paid" && i.status !== "draft" && i.status !== "void")
-    .sort((a, b) => a.dueInDays - b.dueInDays)
-    .map((i) => {
-      const overdue = i.status === "overdue" || i.dueInDays < 0;
-      const soon = !overdue && i.dueInDays <= 7;
-      const d = Math.abs(i.dueInDays);
-      const amt = money(i.balance);
-      return {
-        id: `inv-${i.dbId}`,
-        tone: overdue ? "crit" : soon ? "warn" : "info",
-        title: overdue
-          ? `Invoice ${i.number} to ${i.customerName} is overdue`
-          : i.dueInDays === 0
-            ? `Invoice ${i.number} is due today`
-            : `Invoice ${i.number} awaiting payment`,
-        time: overdue
-          ? `${amt} · overdue by ${d} day${d === 1 ? "" : "s"}`
-          : i.dueInDays === 0
-            ? `${amt} · due today`
-            : `${amt} · due in ${i.dueInDays} day${i.dueInDays === 1 ? "" : "s"}`,
-        dbId: i.dbId,
-      };
-    });
-}
 
 /** Ledger shell: light sidebar with brass spine + a Priceobo-style topbar
  *  (page eyebrow + title on the left, notification / help actions on the right). */
@@ -51,7 +15,7 @@ export function AppLayout() {
 
   const notifs = useMemo(() => buildNotifs(invoices), [invoices]);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [readIds, setReadIds] = useNotifRead();
   const unread = notifs.filter((n) => !readIds.has(n.id));
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -78,7 +42,7 @@ export function AppLayout() {
 
   const markAllRead = () => setReadIds(new Set(notifs.map((n) => n.id)));
   const openNotif = (n: Notif) => {
-    setReadIds((cur) => new Set(cur).add(n.id));
+    setReadIds(new Set(readIds).add(n.id));
     setNotifOpen(false);
     navigate(`/invoices/${n.dbId}`);
   };
@@ -342,7 +306,7 @@ export function AppLayout() {
                       type="button"
                       onClick={() => {
                         setNotifOpen(false);
-                        navigate("/invoices");
+                        navigate("/settings/notifications");
                       }}
                     >
                       View all notifications →
