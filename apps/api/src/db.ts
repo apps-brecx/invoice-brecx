@@ -369,6 +369,13 @@ export async function initSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  // Per-invoice template: NULL = render with whatever template is active.
+  // ON DELETE SET NULL so deleting a template gracefully falls back.
+  // (Runs after the invoice_templates CREATE — the FK needs the table.)
+  await query(
+    `ALTER TABLE invoices ADD COLUMN IF NOT EXISTS
+       template_id BIGINT REFERENCES invoice_templates(id) ON DELETE SET NULL;`,
+  );
   await seedTemplates();
 }
 

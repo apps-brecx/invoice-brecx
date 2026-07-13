@@ -10,7 +10,8 @@ import {
   fmtLong,
   type Invoice,
 } from "../../lib/store";
-import { useTemplate } from "../../lib/template";
+import { templateSettingsSchema } from "@inv/shared";
+import { DEFAULT_TEMPLATE, type TemplateSettings } from "../../lib/template";
 import { InvoicePaper, type PaperData } from "../../components/InvoicePaper";
 import { Stamp, DueText, ActionIcon, AiBadge } from "../../components/bits";
 import { DatePicker } from "../../components/DatePicker";
@@ -48,6 +49,8 @@ interface Detail {
   raw: any;
   items: DetailItem[];
   payments: DetailPayment[];
+  /** The template THIS invoice prints with (its own, or the active one). */
+  template: TemplateSettings;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -56,7 +59,6 @@ export function InvoiceDetail() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { customers, invoices, refresh, loading } = useBilling();
-  const { template } = useTemplate();
 
   const [detail, setDetail] = useState<Detail | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -114,15 +116,22 @@ export function InvoiceDetail() {
   const load = useCallback(async () => {
     try {
       /* eslint-disable @typescript-eslint/no-explicit-any */
-      const res = await api.get<{ invoice: any; items: any[]; payments: any[] }>(
+      const res = await api.get<{ invoice: any; items: any[]; payments: any[]; template?: unknown }>(
         `/invoices/${id}`,
       );
       /* eslint-enable @typescript-eslint/no-explicit-any */
+      let template = DEFAULT_TEMPLATE;
+      try {
+        template = templateSettingsSchema.parse(res.template ?? {});
+      } catch {
+        /* defaults stay */
+      }
       setDetail({
         invoice: mapInvoice(res.invoice),
         raw: res.invoice,
         items: res.items,
         payments: res.payments,
+        template,
       });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) setNotFound(true);
@@ -286,10 +295,10 @@ export function InvoiceDetail() {
   // Direct download through the same pixel-perfect pipeline as bulk export —
   // no print dialog detour.
   async function downloadPdf() {
-    if (pdfBusy || !inv) return;
+    if (pdfBusy || !inv || !detail) return;
     setPdfBusy(true);
     try {
-      await exportInvoicesPdf([inv.dbId], template);
+      await exportInvoicesPdf([inv.dbId], detail.template);
       toast(`${inv.number}.pdf downloaded`);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Could not generate the PDF", "error");
@@ -648,7 +657,7 @@ export function InvoiceDetail() {
             )}
 
             <div className="paper-stage">
-              <InvoicePaper tpl={template} data={paper} />
+              <InvoicePaper tpl={detail.template} data={paper} />
             </div>
 
             {detail.payments.length > 0 && (
@@ -759,11 +768,11 @@ export function InvoiceDetail() {
 
       {sharing && inv && <ShareInvoiceModal invoice={inv} onClose={() => setSharing(false)} />}
 
-      {emailing && inv && emailCustomer && (
+      {emailing && inv && emailCustomer && detail && (
         <InvoiceEmailModal
           invoice={inv}
           customer={emailCustomer}
-          template={template}
+          template={detail.template}
           onDone={async () => {
             await Promise.all([load(), refresh()]);
           }}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, qs } from "../../lib/api";
 import { money, useBilling } from "../../lib/store";
+import { fetchTemplates } from "../../lib/template";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { useToast } from "../../components/Toast";
 
@@ -32,6 +33,9 @@ interface ProposedInvoice {
   taxPct?: number;
   shipping?: number;
   adjustment?: number;
+  /** Template this invoice prints with — an existing template's name, or
+   *  one proposed via propose_template in the same reply. */
+  templateName?: string;
   lines: ProposedLine[];
 }
 interface ProposedTemplate {
@@ -67,7 +71,7 @@ interface ChatMsg {
   at?: string;
   attachments?: Attachment[];
   invoices?: Array<ProposedInvoice & { createdNumber?: string; creating?: boolean }>;
-  templates?: Array<ProposedTemplate & { saved?: boolean; saving?: boolean }>;
+  templates?: Array<ProposedTemplate & { saved?: boolean; saving?: boolean; savedId?: number }>;
   cost?: number;
 }
 interface ChatSummary {
@@ -553,11 +557,29 @@ export function Assistant() {
         );
         clientId = res.client.id as number;
       }
+      // Pin the proposal's design onto the draft: a template proposed in the
+      // same reply is saved first; otherwise match a saved template by name.
+      let templateId: number | null = null;
+      const wantTpl = proposal.templateName?.trim().toLowerCase();
+      if (wantTpl) {
+        const tplIdx =
+          thread[msgIdx]?.templates?.findIndex((t) => t.name.trim().toLowerCase() === wantTpl) ?? -1;
+        if (tplIdx >= 0) templateId = await saveTemplate(msgIdx, tplIdx);
+        if (templateId == null) {
+          try {
+            const existing = await fetchTemplates();
+            templateId = existing.find((t) => t.name.trim().toLowerCase() === wantTpl)?.id ?? null;
+          } catch {
+            /* draft still renders — with the active template */
+          }
+        }
+      }
       /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
       const created = await api.post<{ invoice: any }>(
         "/invoices",
         {
           clientId,
+          templateId,
           orderNumber: proposal.orderNumber || null,
           issueDate: proposal.issueDate,
           dueDate: proposal.dueDate,
@@ -588,10 +610,13 @@ export function Assistant() {
     }
   }
 
-  async function saveTemplate(msgIdx: number, tplIdx: number) {
+  /** Saves a proposed template and returns its new id — createInvoice also
+   *  calls this to pin a proposal's design onto the draft it creates. */
+  async function saveTemplate(msgIdx: number, tplIdx: number): Promise<number | null> {
     const t = thread[msgIdx]?.templates?.[tplIdx];
-    if (!t || t.saving || t.saved) return;
-    const mark = (patch: { saving?: boolean; saved?: boolean }) =>
+    if (!t || t.saving) return null;
+    if (t.saved) return t.savedId ?? null;
+    const mark = (patch: { saving?: boolean; saved?: boolean; savedId?: number }) =>
       setThread((cur) =>
         cur.map((m, i) =>
           i === msgIdx
@@ -601,13 +626,19 @@ export function Assistant() {
       );
     mark({ saving: true });
     try {
-      await api.post("/templates", normalizeTemplate(t), { "x-brecx-source": "claude-ai" });
-      mark({ saving: false, saved: true });
+      const res = await api.post<{ template: { id: number } }>(
+        "/templates",
+        normalizeTemplate(t),
+        { "x-brecx-source": "claude-ai" },
+      );
+      mark({ saving: false, saved: true, savedId: res.template.id });
       schedulePersist();
       toast(`Template “${t.name}” saved to the gallery`);
+      return res.template.id;
     } catch (err) {
       mark({ saving: false });
       toast(err instanceof Error ? err.message : "Failed to save the template", "error");
+      return null;
     }
   }
 
@@ -641,6 +672,12 @@ export function Assistant() {
             <span>
               <i>Order</i>
               <b className="num">{p.orderNumber}</b>
+            </span>
+          )}
+          {p.templateName && (
+            <span>
+              <i>Template</i>
+              <b>{p.templateName}</b>
             </span>
           )}
         </div>

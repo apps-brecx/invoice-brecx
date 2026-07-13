@@ -4,12 +4,40 @@ import {
   invoiceInputSchema,
   invoiceListQuerySchema,
   invoiceStatusSchema,
+  templateSettingsSchema,
   type InvoiceInput,
 } from "@inv/shared";
 import { pool, query } from "../db.js";
 import { logActivity } from "../lib/activity.js";
+import { applyBranding, readBranding } from "../lib/branding.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
+
+/** A templateId from the client is only stored if the template still
+ *  exists — a stale id silently falls back to the active template. */
+async function validTemplateId(id: number | null | undefined): Promise<number | null> {
+  if (!id) return null;
+  const { rows } = await query(`SELECT id FROM invoice_templates WHERE id = $1`, [id]);
+  return rows[0] ? id : null;
+}
+
+/** The invoice's own template when set, otherwise the active one — parsed
+ *  to a full TemplateSettings and dressed in the global org branding so
+ *  the paper always renders with the workspace's logo/name. */
+export async function resolveTemplate(templateId: number | null): Promise<unknown> {
+  const branding = await readBranding();
+  if (templateId) {
+    const { rows } = await query<{ settings: unknown }>(
+      `SELECT settings FROM invoice_templates WHERE id = $1`,
+      [templateId],
+    );
+    if (rows[0]) return applyBranding(templateSettingsSchema.parse(rows[0].settings ?? {}), branding);
+  }
+  const active = await query<{ settings: unknown }>(
+    `SELECT settings FROM invoice_templates WHERE is_active LIMIT 1`,
+  );
+  return applyBranding(templateSettingsSchema.parse(active.rows[0]?.settings ?? {}), branding);
+}
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -128,7 +156,9 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
          FROM payments WHERE invoice_id = $1 ORDER BY paid_on DESC, id DESC`,
       [id],
     );
-    return { invoice: rows[0], items: items.rows, payments: payments.rows };
+    // The template this invoice prints with — its own, or the active one.
+    const template = await resolveTemplate(rows[0].template_id ?? null);
+    return { invoice: rows[0], items: items.rows, payments: payments.rows, template };
   });
 
   // Create draft invoice + items in one transaction. The invoice number is
@@ -144,12 +174,14 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // The Claude AI assistant tags its creations — the flag drives the
       // spark badge in the invoices list and the audit trail.
       const viaAI = req.headers["x-brecx-source"] === "claude-ai";
+      const templateId = await validTemplateId(body.templateId);
       const inserted = await db.query(
         `INSERT INTO invoices (client_id, order_number, issue_date, due_date, terms,
                                subject, currency, tax_rate, discount_pct, shipping,
                                adjustment, subtotal, tax_total, total, notes,
-                               terms_conditions, send_later_at, created_by, via_ai)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                               terms_conditions, send_later_at, created_by, via_ai,
+                               template_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
          RETURNING id`,
         [
           body.clientId, body.orderNumber || null, body.issueDate, body.dueDate,
@@ -157,7 +189,7 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           body.discountPct, body.shipping, body.adjustment,
           totals.subtotal, totals.taxTotal, totals.total,
           body.notes || null, body.termsConditions || null,
-          body.sendLaterAt || null, req.user!.email, viaAI,
+          body.sendLaterAt || null, req.user!.email, viaAI, templateId,
         ],
       );
       const invoiceId = inserted.rows[0].id as number;
@@ -212,21 +244,23 @@ const invoicesRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const db = await pool.connect();
     try {
       await db.query("BEGIN");
+      const templateId = await validTemplateId(body.templateId);
       await db.query(
         `UPDATE invoices SET
             client_id = $1, order_number = $2, issue_date = $3, due_date = $4,
             terms = $5, subject = $6, currency = $7, tax_rate = $8,
             discount_pct = $9, shipping = $10, adjustment = $11,
             subtotal = $12, tax_total = $13, total = $14, notes = $15,
-            terms_conditions = $16, send_later_at = $17, updated_at = NOW()
-          WHERE id = $18`,
+            terms_conditions = $16, send_later_at = $17, template_id = $18,
+            updated_at = NOW()
+          WHERE id = $19`,
         [
           body.clientId, body.orderNumber || null, body.issueDate, body.dueDate,
           body.terms, body.subject || null, body.currency, body.taxRate,
           body.discountPct, body.shipping, body.adjustment,
           totals.subtotal, totals.taxTotal, totals.total,
           body.notes || null, body.termsConditions || null,
-          body.sendLaterAt || null, id,
+          body.sendLaterAt || null, templateId, id,
         ],
       );
       await db.query(`DELETE FROM invoice_items WHERE invoice_id = $1`, [id]);

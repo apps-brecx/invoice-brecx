@@ -2,12 +2,14 @@
  * Bulk invoice export (Zoho-style "Export as PDF" / "Export as ZIP").
  *
  * Each invoice is fetched, rendered offscreen through the real InvoicePaper
- * (active template and all), captured with modern-screenshot and laid into
- * jsPDF pages — the same pixel-for-pixel pipeline the customer statement
- * export uses. Libraries load lazily so the list page bundle stays lean.
+ * (each invoice's own template, falling back to the active one), captured
+ * with modern-screenshot and laid into jsPDF pages — the same pixel-for-pixel
+ * pipeline the customer statement export uses. Libraries load lazily so the
+ * list page bundle stays lean.
  */
 import { createRoot } from "react-dom/client";
 import type { jsPDF } from "jspdf";
+import { templateSettingsSchema } from "@inv/shared";
 import { api } from "./api";
 import { mapInvoice } from "./store";
 import type { TemplateSettings } from "./template";
@@ -60,10 +62,19 @@ export function paperFromDetail(raw: any, items: any[]): PaperData {
   };
 }
 
-async function fetchPaper(id: number): Promise<{ number: string; paper: PaperData }> {
-  const res = await api.get<{ invoice: any; items: any[] }>(`/invoices/${id}`);
+async function fetchPaper(
+  id: number,
+): Promise<{ number: string; paper: PaperData; tpl: TemplateSettings | null }> {
+  const res = await api.get<{ invoice: any; items: any[]; template?: unknown }>(`/invoices/${id}`);
   const paper = paperFromDetail(res.invoice, res.items);
-  return { number: paper.number, paper };
+  // The server resolves the invoice's own template (fallback: active).
+  let tpl: TemplateSettings | null = null;
+  try {
+    if (res.template) tpl = templateSettingsSchema.parse(res.template);
+  } catch {
+    /* fall back to the caller's template */
+  }
+  return { number: paper.number, paper, tpl };
 }
 
 /** Renders the paper into a hidden host and captures it at 2x. */
@@ -125,9 +136,9 @@ export async function buildInvoicePdfAttachment(
   tpl: TemplateSettings,
 ): Promise<{ filename: string; data: string }> {
   const { jsPDF } = await import("jspdf");
-  const { number, paper } = await fetchPaper(id);
+  const { number, paper, tpl: own } = await fetchPaper(id);
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
-  addCanvasPages(pdf, await paperToCanvas(paper, tpl));
+  addCanvasPages(pdf, await paperToCanvas(paper, own ?? tpl));
   const uri: string = pdf.output("datauristring");
   return { filename: `${number}.pdf`, data: uri.slice(uri.indexOf("base64,") + 7) };
 }
@@ -144,10 +155,10 @@ export async function exportInvoicesPdf(
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
   const numbers: string[] = [];
   for (const [i, id] of ids.entries()) {
-    const { number, paper } = await fetchPaper(id);
+    const { number, paper, tpl: own } = await fetchPaper(id);
     numbers.push(number);
     if (i > 0) pdf.addPage();
-    addCanvasPages(pdf, await paperToCanvas(paper, tpl));
+    addCanvasPages(pdf, await paperToCanvas(paper, own ?? tpl));
     onProgress?.(i + 1, ids.length);
   }
   pdf.save(ids.length === 1 ? `${numbers[0]}.pdf` : `brecx-invoices.pdf`);
@@ -162,9 +173,9 @@ export async function exportInvoicesZip(
   const [{ jsPDF }, { default: JSZip }] = await Promise.all([import("jspdf"), import("jszip")]);
   const zip = new JSZip();
   for (const [i, id] of ids.entries()) {
-    const { number, paper } = await fetchPaper(id);
+    const { number, paper, tpl: own } = await fetchPaper(id);
     const pdf = new jsPDF({ unit: "pt", format: "a4" });
-    addCanvasPages(pdf, await paperToCanvas(paper, tpl));
+    addCanvasPages(pdf, await paperToCanvas(paper, own ?? tpl));
     zip.file(`${number}.pdf`, pdf.output("arraybuffer"));
     onProgress?.(i + 1, ids.length);
   }

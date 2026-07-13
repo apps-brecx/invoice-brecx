@@ -132,6 +132,8 @@ export type InvoiceItemInput = z.infer<typeof invoiceItemInputSchema>;
 
 export const invoiceInputSchema = z.object({
   clientId: z.coerce.number().int().positive(),
+  /** Template this invoice prints with; null = the active template. */
+  templateId: z.coerce.number().int().positive().optional().nullable(),
   orderNumber: z.string().trim().max(100).optional().nullable(),
   issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),

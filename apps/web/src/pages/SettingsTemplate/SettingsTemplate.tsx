@@ -1027,6 +1027,10 @@ function TemplateStudio({
           </Sec>
 
           <Sec id="business" title="Business details" openSecs={openSecs} onToggle={toggleSec}>
+            <p className="tab-note" style={{ padding: "0 0 8px" }}>
+              Business details and logo are workspace-wide — saving them here updates
+              every template at once.
+            </p>
             <div className="f-row">
               <div className="field">
                 <input value={tpl.orgName} onChange={(e) => set("orgName", e.target.value)} />

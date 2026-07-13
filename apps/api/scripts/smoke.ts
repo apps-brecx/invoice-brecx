@@ -337,6 +337,59 @@ async function main() {
   const delOk = await http("DELETE", `/templates/${newId}`);
   check("inactive template deleted", delOk.status === 200);
 
+  console.log("smoke: per-invoice template");
+  const pinTpl = await http("POST", "/templates", {
+    name: "Smoke Pin Tpl",
+    settings: { ...activeBefore.settings, accent: "#0000ff" },
+  });
+  check("pin template created", pinTpl.status === 201, pinTpl.data);
+  const pinId = pinTpl.data.template.id as number;
+  const draftBody = (description: string, templateId?: number) => ({
+    clientId,
+    templateId,
+    issueDate: "2026-07-01",
+    dueDate: "2026-07-31",
+    terms: "Net 30",
+    items: [{ description, quantity: 1, unitPrice: 10 }],
+  });
+  const pinnedInv = await http("POST", "/invoices", draftBody("Pinned line", pinId));
+  check(
+    "invoice pinned to template",
+    pinnedInv.status === 201 && Number(pinnedInv.data.invoice.template_id) === Number(pinId),
+    pinnedInv.data.invoice?.template_id,
+  );
+  const pinnedDetail = await http("GET", `/invoices/${pinnedInv.data.invoice.id}`);
+  check(
+    "detail serves the pinned template",
+    pinnedDetail.data.template?.accent === "#0000ff",
+    pinnedDetail.data.template?.accent,
+  );
+  const unpinnedInv = await http("POST", "/invoices", draftBody("Unpinned line"));
+  const unpinnedDetail = await http("GET", `/invoices/${unpinnedInv.data.invoice.id}`);
+  check(
+    "no pin → active template served",
+    unpinnedInv.data.invoice.template_id === null &&
+      unpinnedDetail.data.template?.accent === activeBefore.settings.accent,
+    unpinnedDetail.data.template?.accent,
+  );
+  const staleInv = await http("POST", "/invoices", draftBody("Stale line", 99_999_999));
+  check(
+    "stale templateId stored as null",
+    staleInv.status === 201 && staleInv.data.invoice.template_id === null,
+    staleInv.data.invoice?.template_id,
+  );
+  const delPin = await http("DELETE", `/templates/${pinId}`);
+  check("pinned template deletable", delPin.status === 200);
+  const afterDelPin = await http("GET", `/invoices/${pinnedInv.data.invoice.id}`);
+  check(
+    "invoice unpins when its template is deleted",
+    afterDelPin.data.invoice.template_id === null,
+    afterDelPin.data.invoice.template_id,
+  );
+  for (const d of [pinnedInv, unpinnedInv, staleInv]) {
+    await http("DELETE", `/invoices/${d.data.invoice.id}`);
+  }
+
   console.log("smoke: template settings");
   const tplDefault = await http("GET", "/settings/template");
   check("template defaults", tplDefault.data.template.documentTitle === "INVOICE");
@@ -351,6 +404,47 @@ async function main() {
   check("template persisted", tplBack.data.template.accent === "#123456" && tplBack.data.template.layout === "compact");
   // restore defaults so a real user's settings aren't affected (only if none existed before — smoke assumes fresh key or acceptable reset)
   await http("PUT", "/settings/template", tplDefault.data.template);
+
+  console.log("smoke: global branding");
+  const brand0 = await http("GET", "/settings/template");
+  const bareTpl = await http("POST", "/templates", { name: "Smoke Bare Tpl", settings: {} });
+  check(
+    "template created without branding inherits global logo/name",
+    bareTpl.status === 201 &&
+      bareTpl.data.template.settings.orgName === brand0.data.template.orgName &&
+      bareTpl.data.template.settings.logoDataUrl === brand0.data.template.logoDataUrl,
+    bareTpl.data.template?.settings?.orgName,
+  );
+  await http("PUT", "/settings/template", { ...brand0.data.template, orgName: "Smoke Global Org" });
+  const galAfterBrand = await http("GET", "/templates");
+  check(
+    "branding edit propagates to every template",
+    galAfterBrand.data.templates.every(
+      (t: { settings: { orgName: string } }) => t.settings.orgName === "Smoke Global Org",
+    ),
+    galAfterBrand.data.templates.map((t: { settings: { orgName: string } }) => t.settings.orgName),
+  );
+  await http("PUT", "/settings/template", brand0.data.template); // restore branding
+  await http("DELETE", `/templates/${bareTpl.data.template.id}`);
+  // The dedicated branding endpoints (Settings → General → Organization profile).
+  const bGet = await http("GET", "/settings/branding");
+  check(
+    "branding endpoint serves the profile",
+    bGet.status === 200 && typeof bGet.data.branding.logoDataUrl === "string",
+    bGet.data,
+  );
+  const bPut = await http("PUT", "/settings/branding", {
+    ...bGet.data.branding,
+    orgName: "Smoke Branding Org",
+  });
+  check("branding endpoint saves", bPut.data.branding.orgName === "Smoke Branding Org", bPut.data);
+  const tplAfterBrand = await http("GET", "/settings/template");
+  check(
+    "branding endpoint edit reaches templates",
+    tplAfterBrand.data.template.orgName === "Smoke Branding Org",
+    tplAfterBrand.data.template.orgName,
+  );
+  await http("PUT", "/settings/branding", bGet.data.branding); // restore
 
   console.log("smoke: cleanup");
   await query(`DELETE FROM invoices WHERE id = $1`, [invoiceId]); // cascades items+payments

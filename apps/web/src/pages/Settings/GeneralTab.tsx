@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CURRENCIES } from "@inv/shared";
 import { api, ApiError } from "../../lib/api";
 import { fetchWorkspace, saveWorkspace, type WorkspaceSettings } from "../../lib/team";
@@ -59,19 +59,23 @@ export function GeneralTab() {
 
   if (!ws) {
     return (
-      <div className="card set-card" aria-busy="true">
-        <div className="sc-head">
-          <h2>Workspace</h2>
-          <span className="sc-sub">General workspace configuration</span>
+      <>
+        <div className="card set-card" aria-busy="true">
+          <div className="sc-head">
+            <h2>Workspace</h2>
+            <span className="sc-sub">General workspace configuration</span>
+          </div>
+          <div className="sc-body">
+            <FormSkeleton fields={5} />
+          </div>
         </div>
-        <div className="sc-body">
-          <FormSkeleton fields={5} />
-        </div>
-      </div>
+        <OrganizationCard />
+      </>
     );
   }
 
   return (
+    <>
     <form className="card set-card" onSubmit={onSubmit}>
       <div className="sc-head">
         <h2>Workspace</h2>
@@ -121,6 +125,182 @@ export function GeneralTab() {
             onChange={(v) => setWs({ ...ws, defaultTerms: v })}
           />
           <small>Pre-selected on new customers and invoices.</small>
+        </div>
+
+        <div className="sc-actions">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </form>
+    <OrganizationCard />
+    </>
+  );
+}
+
+interface OrgBranding {
+  orgName: string;
+  orgTagline: string;
+  orgAddress: string;
+  orgPhone: string;
+  orgEmail: string;
+  logoDataUrl: string;
+}
+
+/** Zoho-style Organization Profile: the ONE logo + business identity every
+ *  invoice template prints with — replace or remove it here and every
+ *  template, PDF, email and share link follows. */
+function OrganizationCard() {
+  const { toast } = useToast();
+  const [b, setB] = useState<OrgBranding | null>(null);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void api
+      .get<{ branding: OrgBranding }>("/settings/branding")
+      .then((r) => setB(r.branding))
+      .catch(() => toast("Couldn't load the organization profile", "error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function onLogoPick(file: File | undefined) {
+    if (!file || !b) return;
+    if (file.size > 300_000) {
+      toast("Logo must be under 300 KB — export a smaller PNG/SVG.", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setB({ ...b, logoDataUrl: String(reader.result ?? "") });
+    reader.readAsDataURL(file);
+  }
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!b) return;
+    setSaving(true);
+    try {
+      const res = await api.put<{ branding: OrgBranding }>("/settings/branding", b);
+      setB(res.branding);
+      toast("Organization profile saved — every template now uses it");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't save the profile", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!b) {
+    return (
+      <div className="card set-card" aria-busy="true">
+        <div className="sc-head">
+          <h2>Organization profile</h2>
+          <span className="sc-sub">Logo and business identity printed on every invoice</span>
+        </div>
+        <div className="sc-body">
+          <FormSkeleton fields={4} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form className="card set-card" onSubmit={onSubmit}>
+      <div className="sc-head">
+        <h2>Organization profile</h2>
+        <span className="sc-sub">
+          Logo and business identity printed on every invoice — one copy, used by all templates.
+        </span>
+      </div>
+      <div className="sc-body">
+        <div className="set-field">
+          <label>Invoice logo</label>
+          <div className="logo-row">
+            {b.logoDataUrl ? (
+              <img className="logo-thumb" src={b.logoDataUrl} alt="Organization logo" />
+            ) : (
+              <div className="logo-thumb empty">No logo</div>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                onLogoPick(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <button type="button" className="btn btn-ghost" onClick={() => fileRef.current?.click()}>
+              {b.logoDataUrl ? "Replace logo" : "Upload logo"}
+            </button>
+            {b.logoDataUrl && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setB({ ...b, logoDataUrl: "" })}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          <small>
+            PNG/JPG under 300 KB. Changing it here updates every template, invoice, PDF and
+            share link at once.
+          </small>
+        </div>
+
+        <div className="set-grid2">
+          <div className="set-field">
+            <label>
+              Company name <i>*</i>
+            </label>
+            <input
+              value={b.orgName}
+              required
+              maxLength={200}
+              onChange={(e) => setB({ ...b, orgName: e.target.value })}
+            />
+          </div>
+          <div className="set-field">
+            <label>Tagline</label>
+            <input
+              value={b.orgTagline}
+              maxLength={200}
+              onChange={(e) => setB({ ...b, orgTagline: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <div className="set-field">
+          <label>Address</label>
+          <textarea
+            rows={2}
+            value={b.orgAddress}
+            maxLength={500}
+            onChange={(e) => setB({ ...b, orgAddress: e.target.value })}
+          />
+          <small>One line per row, exactly as it should print on the paper.</small>
+        </div>
+
+        <div className="set-grid2">
+          <div className="set-field">
+            <label>Phone</label>
+            <input
+              value={b.orgPhone}
+              maxLength={60}
+              onChange={(e) => setB({ ...b, orgPhone: e.target.value })}
+            />
+          </div>
+          <div className="set-field">
+            <label>Email</label>
+            <input
+              value={b.orgEmail}
+              maxLength={200}
+              onChange={(e) => setB({ ...b, orgEmail: e.target.value })}
+            />
+          </div>
         </div>
 
         <div className="sc-actions">

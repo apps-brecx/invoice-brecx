@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { query } from "../db.js";
 import { logActivity } from "../lib/activity.js";
-import { ENRICHED } from "./invoices.js";
+import { ENRICHED, resolveTemplate } from "./invoices.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 const tokenParam = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -74,8 +74,8 @@ const shareRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     return { disabled: rowCount ?? 0 };
   });
 
-  /** The invoice + items + active template — everything the public paper
-   *  needs. Returns null when the invoice vanished. */
+  /** The invoice + items + its template (falling back to the active one) —
+   *  everything the public paper needs. Returns null when the invoice vanished. */
   async function sharedPayload(id: number) {
     const { rows } = await query(
       `SELECT t.*, c.email AS client_email,
@@ -92,10 +92,8 @@ const shareRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
          FROM invoice_items WHERE invoice_id = $1 ORDER BY position ASC`,
       [id],
     );
-    const tpl = await query<{ settings: unknown }>(
-      `SELECT settings FROM invoice_templates WHERE is_active LIMIT 1`,
-    );
-    return { invoice: rows[0], items: items.rows, template: tpl.rows[0]?.settings ?? {} };
+    const template = await resolveTemplate(rows[0].template_id ?? null);
+    return { invoice: rows[0], items: items.rows, template };
   }
 
   const liveLink = async (token: string) => {

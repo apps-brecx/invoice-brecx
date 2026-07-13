@@ -6,7 +6,7 @@ import { env } from "../env.js";
 import { logActivity } from "../lib/activity.js";
 import { renderInvoiceEmail } from "../lib/invoiceEmail.js";
 import { smtpConfigured, sendMail } from "../lib/mailer.js";
-import { ENRICHED } from "./invoices.js";
+import { ENRICHED, resolveTemplate } from "./invoices.js";
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
@@ -40,6 +40,7 @@ interface InvoiceRow {
   issue_date: string;
   due_date: string;
   total: string;
+  template_id: number | null;
 }
 
 /** Zoho-style "Send Email" for a single invoice, over the configured SMTP. */
@@ -47,7 +48,7 @@ const invoiceEmailRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   async function loadInvoice(id: number): Promise<InvoiceRow | null> {
     const { rows } = await query<InvoiceRow>(
       `SELECT t.id, t.number, t.client_id, t.client_name, t.status,
-              t.issue_date, t.due_date, t.total::text AS total
+              t.issue_date, t.due_date, t.total::text AS total, t.template_id
          FROM (${ENRICHED}) t WHERE t.id = $1`,
       [id],
     );
@@ -79,11 +80,10 @@ const invoiceEmailRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     });
   }
 
-  async function orgName(): Promise<string> {
-    const { rows } = await query<{ settings: { orgName?: string } | null }>(
-      `SELECT settings FROM invoice_templates WHERE is_active LIMIT 1`,
-    );
-    return rows[0]?.settings?.orgName || "Fresh Finest";
+  /** Email branding follows the invoice's template (fallback: active). */
+  async function orgName(inv: InvoiceRow): Promise<string> {
+    const tpl = (await resolveTemplate(inv.template_id ?? null)) as { orgName?: string };
+    return tpl.orgName || "Fresh Finest";
   }
 
   // Renders exactly what would be sent — the compose modal's preview.
@@ -96,7 +96,7 @@ const invoiceEmailRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       const inv = await loadInvoice(id);
       if (!inv) return reply.code(404).send({ error: "Invoice not found." });
       // The real link is only minted on send — the preview shows the button.
-      const html = render(inv, body, "#", await orgName());
+      const html = render(inv, body, "#", await orgName(inv));
       return { html };
     },
   );
@@ -129,7 +129,7 @@ const invoiceEmailRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       );
       const viewUrl = `${safeOrigin(body.origin)}/share/${token}`;
 
-      const html = render(inv, body, viewUrl, await orgName());
+      const html = render(inv, body, viewUrl, await orgName(inv));
       await sendMail({
         to: body.to,
         cc: body.cc,

@@ -7,15 +7,23 @@ import { useToast } from "./Toast";
 
 /* Zoho-style "Customize invoice" right drawer. Home view shows preference
  * cards; "PDF Template" flips to the Choose Template view listing every
- * saved template with live previews — clicking one makes it active. */
+ * saved template with live previews. Without onPick, clicking one switches
+ * the globally active template; with onPick (the invoice form), the click
+ * only selects the template for THAT invoice — global stays untouched. */
 
 export function CustomizeDrawer({
   onClose,
   initialView = "home",
+  pickedId,
+  onPick,
 }: {
   onClose: () => void;
   /** Open straight on a view (e.g. "templates" from the statement's Customize). */
   initialView?: "home" | "templates";
+  /** The invoice's currently selected template; null = follows the active one. */
+  pickedId?: number | null;
+  /** Per-invoice selection handler — replaces the global activate behavior. */
+  onPick?: (t: TemplateRecord) => void;
 }) {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -45,6 +53,11 @@ export function CustomizeDrawer({
   }, [onClose]);
 
   async function pick(t: TemplateRecord) {
+    if (onPick) {
+      onPick(t);
+      toast(`"${t.name}" selected for this invoice`);
+      return;
+    }
     if (t.active) return;
     setSavingId(t.id);
     try {
@@ -57,6 +70,11 @@ export function CustomizeDrawer({
       setSavingId(null);
     }
   }
+
+  /** Which card wears the ★ badge — the invoice's pick (falling back to
+   *  the active template) in onPick mode, the active one otherwise. */
+  const isSelected = (t: TemplateRecord) =>
+    onPick ? (pickedId != null ? t.id === pickedId : t.active) : t.active;
 
   const shown = templates.filter((t) =>
     t.name.toLowerCase().includes(q.trim().toLowerCase()),
@@ -88,7 +106,11 @@ export function CustomizeDrawer({
               <span className="pref-ic">▤</span>
               <span>
                 <b>PDF Template</b>
-                <small>Choose from your saved templates for invoice PDFs.</small>
+                <small>
+                  {onPick
+                    ? "Choose which template THIS invoice prints with."
+                    : "Choose from your saved templates for invoice PDFs."}
+                </small>
               </span>
             </button>
 
@@ -148,7 +170,7 @@ export function CustomizeDrawer({
                 <button
                   type="button"
                   key={t.id}
-                  className={"tpl-card" + (t.active ? " on" : "")}
+                  className={"tpl-card" + (isSelected(t) ? " on" : "")}
                   disabled={savingId !== null}
                   onClick={() => void pick(t)}
                 >
@@ -157,7 +179,7 @@ export function CustomizeDrawer({
                       <InvoicePaper tpl={t.settings} data={SAMPLE_PAPER} />
                     </span>
                   </span>
-                  {t.active && <span className="tpl-selected">★ SELECTED</span>}
+                  {isSelected(t) && <span className="tpl-selected">★ SELECTED</span>}
                   <span className="tpl-name">{savingId === t.id ? "Applying…" : t.name}</span>
                 </button>
               ))}

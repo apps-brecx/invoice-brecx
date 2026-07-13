@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useBilling, money, type Customer, type Item } from "../../lib/store";
-import { useTemplate } from "../../lib/template";
+import { useTemplate, fetchTemplates, type TemplateRecord } from "../../lib/template";
 import { usePaymentTerms, dueDateFor } from "../../lib/terms";
 import { ActionIcon } from "../../components/bits";
 import { useToast } from "../../components/Toast";
@@ -74,6 +74,10 @@ export function CreateInvoice() {
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [scheduling, setScheduling] = useState(false);
   const [customizing, setCustomizing] = useState(false);
+  const [drawerView, setDrawerView] = useState<"home" | "templates">("home");
+  // THIS invoice's template — null follows the globally active one.
+  const [templateId, setTemplateId] = useState<number | null>(null);
+  const [tplList, setTplList] = useState<TemplateRecord[]>([]);
   const [importing, setImporting] = useState(false);
   const importedRef = useRef(0);
   const sendMenuRef = useRef<HTMLDivElement>(null);
@@ -89,13 +93,30 @@ export function CreateInvoice() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [sendMenuOpen]);
 
-  // Template defaults prefill notes/terms on a fresh invoice.
+  // All templates once — the picker needs them, and the selected one drives
+  // the item table's columns. Failure just leaves the active-template flow.
+  useEffect(() => {
+    fetchTemplates()
+      .then(setTplList)
+      .catch(() => {});
+  }, []);
+
+  // The template this invoice renders with: its own pick, else the active one.
+  const pickedTpl = useMemo(
+    () => tplList.find((t) => t.id === templateId) ?? null,
+    [tplList, templateId],
+  );
+  const effTemplate = pickedTpl?.settings ?? template;
+  const effTemplateName = pickedTpl?.name ?? tplList.find((t) => t.active)?.name ?? null;
+
+  // Template defaults prefill notes/terms on a fresh invoice (only while
+  // the fields are still empty — a picked template fills them too).
   useEffect(() => {
     if (!editing && tplLoaded) {
-      setNotes((cur) => cur || template.defaultNotes);
-      setTnc((cur) => cur || template.defaultTerms);
+      setNotes((cur) => cur || effTemplate.defaultNotes);
+      setTnc((cur) => cur || effTemplate.defaultTerms);
     }
-  }, [editing, tplLoaded, template.defaultNotes, template.defaultTerms]);
+  }, [editing, tplLoaded, effTemplate.defaultNotes, effTemplate.defaultTerms]);
 
   // Edit mode: load the draft.
   useEffect(() => {
@@ -122,6 +143,7 @@ export function CreateInvoice() {
         setAdjustment(Number(invoice.adjustment));
         setNotes(invoice.notes ?? "");
         setTnc(invoice.terms_conditions ?? "");
+        setTemplateId(invoice.template_id ?? null);
         setLines(
           rows.map((it: any) => ({
             description: it.description,
@@ -203,11 +225,11 @@ export function CreateInvoice() {
     setBulkOpen(false);
   }
 
-  // The item table adapts to the ACTIVE template: its column labels apply,
-  // and visible unit/custom columns get inputs here so their values print.
+  // The item table adapts to THIS invoice's template: its column labels
+  // apply, and visible unit/custom columns get inputs here so their values print.
   const colLabel = (key: string, fallback: string) =>
-    template.columns.find((c) => c.key === key)?.label || fallback;
-  const extraCols = template.columns.filter(
+    effTemplate.columns.find((c) => c.key === key)?.label || fallback;
+  const extraCols = effTemplate.columns.filter(
     (c) => c.show && (c.key === "unit" || c.key.startsWith("custom:")),
   );
 
@@ -221,6 +243,7 @@ export function CreateInvoice() {
     return {
       sendLaterAt,
       clientId: custId,
+      templateId,
       orderNumber: orderNumber.trim() || null,
       issueDate: issue,
       dueDate: due,
@@ -336,7 +359,23 @@ export function CreateInvoice() {
               <ActionIcon name="upload" /> Import Invoices
             </button>
           )}
-          <button className="btn btn-ghost" onClick={() => setCustomizing(true)}>
+          <button
+            className="btn btn-ghost"
+            title="Choose which template this invoice prints with"
+            onClick={() => {
+              setDrawerView("templates");
+              setCustomizing(true);
+            }}
+          >
+            ▤ {effTemplateName ? `Template: ${effTemplateName}` : "Choose Template"}
+          </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              setDrawerView("home");
+              setCustomizing(true);
+            }}
+          >
             ⚙ Customize invoice
           </button>
         </div>
@@ -733,7 +772,14 @@ export function CreateInvoice() {
         <BulkItemsModal items={items} onClose={() => setBulkOpen(false)} onAdd={addBulk} />
       )}
 
-      {customizing && <CustomizeDrawer onClose={() => setCustomizing(false)} />}
+      {customizing && (
+        <CustomizeDrawer
+          initialView={drawerView}
+          pickedId={templateId}
+          onPick={(t) => setTemplateId(t.id)}
+          onClose={() => setCustomizing(false)}
+        />
+      )}
 
       {importing && (
         <ImportInvoicesModal

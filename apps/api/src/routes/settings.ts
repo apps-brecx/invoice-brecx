@@ -2,6 +2,13 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { templateSettingsSchema, paymentTermInputSchema, PAYMENT_TERMS } from "@inv/shared";
 import { query } from "../db.js";
 import {
+  applyBranding,
+  brandingSchema,
+  extractBranding,
+  readBranding,
+  writeBranding,
+} from "../lib/branding.js";
+import {
   workspaceSettingsSchema,
   readWorkspaceSettings,
   writeWorkspaceSettings,
@@ -49,13 +56,26 @@ const settingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     return { workspace };
   });
 
+  // Global org branding (Settings → General → Organization profile) —
+  // ONE logo/name/address, overlaid on every template at read time.
+  app.get("/settings/branding", { preHandler: app.requireAuth }, async () => {
+    return { branding: await readBranding() };
+  });
+
+  app.put("/settings/branding", { preHandler: app.requireAuth }, async (req) => {
+    const branding = brandingSchema.parse(req.body ?? {});
+    await writeBranding(branding);
+    return { branding };
+  });
+
   // The ACTIVE invoice template's settings — what invoices + print use.
   // (Templates themselves live in invoice_templates; see routes/templates.ts.)
   app.get("/settings/template", { preHandler: app.requireAuth }, async () => {
     const { rows } = await query<{ settings: unknown }>(
       `SELECT settings FROM invoice_templates WHERE is_active LIMIT 1`,
     );
-    return { template: templateSettingsSchema.parse(rows[0]?.settings ?? {}) };
+    const branding = await readBranding();
+    return { template: applyBranding(templateSettingsSchema.parse(rows[0]?.settings ?? {}), branding) };
   });
 
   // Payment terms: built-ins plus user-defined "due after N days" terms.
@@ -82,6 +102,9 @@ const settingsRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
   app.put("/settings/template", { preHandler: app.requireAuth }, async (req) => {
     const template = templateSettingsSchema.parse(req.body ?? {});
+    // Branding fields ride along with template edits — write them through
+    // to the global copy so every other template follows.
+    await extractBranding(template);
     const updated = await query(
       `UPDATE invoice_templates SET settings = $1, updated_at = NOW()
         WHERE is_active RETURNING id`,

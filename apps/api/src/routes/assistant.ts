@@ -85,6 +85,13 @@ const TOOLS: Anthropic.Tool[] = [
               taxPct: { type: "number" },
               shipping: { type: "number" },
               adjustment: { type: "number" },
+              templateName: {
+                type: "string",
+                description:
+                  "Template this invoice should print with — an existing template's name " +
+                  "from the catalog, or the name of a design you propose via propose_template " +
+                  "in this same reply. Omit to use the account's active template.",
+              },
               lines: { type: "array", items: LINE_SCHEMA, minItems: 1 },
             },
             required: ["customerName", "issueDate", "dueDate", "terms", "lines"],
@@ -99,8 +106,12 @@ const TOOLS: Anthropic.Tool[] = [
     name: "propose_template",
     description:
       "Present a NEW invoice-template design as a confirmable card, for documents whose " +
-      "layout none of the existing templates covers (extra columns, grouped pricing tiers, " +
-      "different labels). The user reviews and clicks Save Template. Custom columns use " +
+      "look or structure none of the existing templates covers — extra columns, grouped " +
+      "pricing tiers, different labels, OR a distinct visual identity (brand color, layout). " +
+      "Be creative: mirror the source document's design — take the accent from its colors, " +
+      "pick the layout/tableStyle/headerStyle that echo it, reuse its column wording. " +
+      "The org's logo/name/address are applied to every template automatically — do not " +
+      "design around them. The user reviews and clicks Save Template. Custom columns use " +
       "key 'custom:<snake_id>'; built-in keys are index, description, qty, unit, rate, amount. " +
       "Columns sharing a `group` string get a spanning header band.",
     input_schema: {
@@ -182,8 +193,17 @@ async function buildSystem(): Promise<Anthropic.TextBlockParam[]> {
         "even when it differs from the catalog rate. Use catalog rates only when the document has " +
         "none. Unmatched customer → newCustomer: true.\n" +
         "- Dates: if the document lacks an issue date use today; derive dueDate from terms.\n" +
-        "- If the document's layout needs columns our templates lack (e.g. dual pricing tiers, " +
-        "units-per-box), ALSO call propose_template with a matching design.\n" +
+        "- Templates: the user may give specific instructions, or just attach a file and say " +
+        "'make the invoice'. Follow their instructions when given; everything they don't specify " +
+        "is YOUR call — never ask which template to use. Set each proposed invoice's " +
+        "templateName yourself: the existing template that best fits the document, or — when none " +
+        "match its look or structure (extra columns like dual pricing tiers or units-per-box, a " +
+        "distinct brand color, a different layout) — ALSO call propose_template with a creative " +
+        "design that mirrors the document (accent from its colors, matching layout, tableStyle, " +
+        "headerStyle, column wording) and set templateName to that new design's name. Never " +
+        "silently fall back to the default look when the document clearly has its own.\n" +
+        "- The org's logo, name and address are managed globally and applied to every template " +
+        "automatically — never ask about them or try to reproduce them in a design.\n" +
         "- If data is ambiguous or amounts don't add up, ask a short clarifying question instead of guessing.\n" +
         "- Keep chat replies brief and plain — one or two sentences around the proposal cards.\n" +
         "- Never invent amounts. Quantities × rates must reproduce the document's totals.\n\n" +
